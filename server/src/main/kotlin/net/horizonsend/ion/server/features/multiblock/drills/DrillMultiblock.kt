@@ -2,6 +2,7 @@ package net.horizonsend.ion.server.features.multiblock.drills
 
 import net.horizonsend.ion.common.extensions.alert
 import net.horizonsend.ion.common.extensions.userError
+import net.kyori.adventure.audience.Audience
 import net.kyori.adventure.text.Component.text
 import net.kyori.adventure.text.TextComponent
 import net.kyori.adventure.text.format.NamedTextColor.RED
@@ -90,8 +91,8 @@ abstract class DrillMultiblock(tierText: String, val tierMaterial: Material) :
 			maxBroken: Int,
 			toDestroy: MutableList<Block>,
 			output: Inventory,
-			player: Player,
-			vararg people: Player = emptyArray()
+			user: Audience,
+			canBuild: (Block) -> Boolean,
 		): Int {
 			var broken = 0
 
@@ -100,9 +101,7 @@ abstract class DrillMultiblock(tierText: String, val tierMaterial: Material) :
 					continue
 				}
 
-				val testEvent = BlockBreakEvent(block, player)
-				testEvent.isDropItems = false
-				if (!testEvent.callEvent()) {
+				if (!canBuild(block)) {
 					continue
 				}
 
@@ -115,8 +114,7 @@ abstract class DrillMultiblock(tierText: String, val tierMaterial: Material) :
 
 				for (item in drops) {
 					if (!LegacyItemUtils.canFit(output, item)) {
-						player.userError("Not enough space.")
-						people.forEach { it.userError("Not enough space.") }
+						user.userError("Not enough space.")
 
 						setUser(sign, null)
 
@@ -265,7 +263,12 @@ abstract class DrillMultiblock(tierText: String, val tierMaterial: Material) :
 
 		val maxBroken = max(1, if (drills > 5) (5 + drills) / drills + 15 / drills else 10 - drills)
 
-		val broken = breakBlocks(sign, maxBroken, toDestroy, getOutput(sign.block), player)
+		val broken = breakBlocks(sign, maxBroken, toDestroy, getOutput(sign.block), player) {
+			val testEvent = BlockBreakEvent(it, player)
+			testEvent.isDropItems = false
+
+			return@breakBlocks testEvent.callEvent()
+		}
 
 		val powerUsage = broken * 10
 		PowerMachines.setPower(sign, power - powerUsage, true)
