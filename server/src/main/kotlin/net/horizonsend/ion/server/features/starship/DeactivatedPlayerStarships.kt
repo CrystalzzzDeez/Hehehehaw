@@ -8,7 +8,7 @@ import net.horizonsend.ion.common.database.schema.starships.PlayerStarshipData
 import net.horizonsend.ion.common.database.slPlayerId
 import net.horizonsend.ion.server.IonServer
 import net.horizonsend.ion.server.IonServerComponent
-import net.horizonsend.ion.server.features.starship.active.ActivePlayerStarship
+import net.horizonsend.ion.server.features.starship.active.ActiveControlledStarship
 import net.horizonsend.ion.server.features.starship.active.ActiveStarshipFactory
 import net.horizonsend.ion.server.features.starship.active.ActiveStarships
 import net.horizonsend.ion.server.features.starship.subsystem.LandingGearSubsystem
@@ -171,7 +171,7 @@ object DeactivatedPlayerStarships : IonServerComponent() {
 		data: PlayerStarshipData,
 		state: PlayerStarshipState,
 		carriedShips: List<PlayerStarshipData>,
-		callback: (ActivePlayerStarship) -> Unit = {}
+		callback: (ActiveControlledStarship) -> Unit = {}
 	): Unit = Tasks.async {
 		synchronized(lock) {
 			require(!carriedShips.contains(data)) { "Carried ships can't contain the ship itself!" }
@@ -212,7 +212,7 @@ object DeactivatedPlayerStarships : IonServerComponent() {
 		return carriedShipMap
 	}
 
-	fun deactivateAsync(starship: ActivePlayerStarship, callback: () -> Unit = {}) {
+	fun deactivateAsync(starship: ActiveControlledStarship, callback: () -> Unit = {}) {
 		Tasks.checkMainThread()
 
 		if (PilotedStarships.isPiloted(starship)) {
@@ -225,7 +225,7 @@ object DeactivatedPlayerStarships : IonServerComponent() {
 		}
 	}
 
-	fun deactivateNow(starship: ActivePlayerStarship) {
+	fun deactivateNow(starship: ActiveControlledStarship) {
 		if (PilotedStarships.isPiloted(starship)) {
 			Tasks.getSyncBlocking {
 				PilotedStarships.unpilot(starship)
@@ -259,7 +259,7 @@ object DeactivatedPlayerStarships : IonServerComponent() {
 
 	private fun saveDeactivatedData(
 		world: World,
-		starship: ActivePlayerStarship,
+		starship: ActiveControlledStarship,
 		state: PlayerStarshipState,
 		carriedShipStateMap: Object2ObjectOpenHashMap<PlayerStarshipData, PlayerStarshipState>
 	) {
