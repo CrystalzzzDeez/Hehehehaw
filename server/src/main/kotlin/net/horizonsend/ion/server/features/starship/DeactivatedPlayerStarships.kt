@@ -232,7 +232,7 @@ object DeactivatedPlayerStarships : IonServerComponent() {
 			}
 		}
 
-		val world: World = starship.serverLevel.world
+		val world: World = starship.world
 
 		val carriedShipStateMap = Object2ObjectOpenHashMap<PlayerStarshipData, PlayerStarshipState>()
 
