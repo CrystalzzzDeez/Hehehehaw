@@ -1,5 +1,6 @@
 package net.horizonsend.ion.server.features.starship.subsystem.weapon.primary
 
+import net.horizonsend.ion.common.extensions.userError
 import net.horizonsend.ion.server.IonServer
 import net.horizonsend.ion.server.features.multiblock.starshipweapon.turret.LightTurretMultiblock
 import net.horizonsend.ion.server.features.starship.active.ActiveStarship
@@ -23,9 +24,8 @@ class LightTurretWeaponSubsystem(
 
 	override fun autoFire(target: Player, dir: Vector) {
 		multiblock.shoot(starship.serverLevel.world, pos, face, dir, starship, starship.controller)
-		{
 		if (starship.initialBlockCount > 12000) {
-			shooter.userError("You can't fire LTs on a ship larger than 12000 blocks!")
+			target.userError("You can't fire light turrets on a ship larger than 12000 blocks!")
 			return
 		}
 	}
