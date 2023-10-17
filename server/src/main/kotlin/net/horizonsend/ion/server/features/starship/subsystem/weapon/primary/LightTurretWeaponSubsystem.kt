@@ -23,5 +23,10 @@ class LightTurretWeaponSubsystem(
 
 	override fun autoFire(target: Player, dir: Vector) {
 		multiblock.shoot(starship.serverLevel.world, pos, face, dir, starship, starship.controller)
+		{
+		if (starship.initialBlockCount > 12000) {
+			shooter.userError("You can't fire LTs on a ship larger than 12000 blocks!")
+			return
+		}
 	}
 }
