@@ -1,7 +1,7 @@
 package net.horizonsend.ion.server.features.starship.control.controllers
 
-import net.horizonsend.ion.server.features.starship.active.ActiveStarship
 import net.horizonsend.ion.server.features.starship.damager.Damager
+import net.horizonsend.ion.server.features.starship.active.ActiveStarship
 import net.horizonsend.ion.server.features.starship.damager.noOpDamager
 import net.kyori.adventure.audience.Audience
 import net.kyori.adventure.text.Component

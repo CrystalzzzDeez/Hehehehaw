@@ -90,6 +90,7 @@ abstract class ActiveStarship (
 		}
 
 	@Suppress("leakingThis") // Only for initialization, will be replaced
+
 	var controller: Controller = NoOpController(this, null)
 		set(value) {
 			if (this is ActiveControlledStarship) PilotedStarships.changeController(this, value)

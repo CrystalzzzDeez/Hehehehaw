@@ -1,5 +1,6 @@
 package net.horizonsend.ion.server.features.starship.subsystem.weapon
 
+import org.bukkit.entity.Player
 import com.google.common.collect.HashMultimap
 import com.google.common.util.concurrent.AtomicDouble
 import net.horizonsend.ion.common.extensions.alertActionMessage
@@ -7,6 +8,7 @@ import net.horizonsend.ion.common.extensions.userErrorActionMessage
 import net.horizonsend.ion.server.command.admin.debug
 import net.horizonsend.ion.server.command.admin.debugRed
 import net.horizonsend.ion.server.features.starship.AutoTurretTargeting
+import net.horizonsend.ion.server.features.starship.damager.Damager
 import net.horizonsend.ion.server.features.starship.active.ActiveStarship
 import net.horizonsend.ion.server.features.starship.damager.Damager
 import net.horizonsend.ion.server.features.starship.subsystem.weapon.interfaces.AmmoConsumingWeaponSubsystem
@@ -93,6 +95,7 @@ object StarshipWeapons {
 			ship.debug("have we fired those already?")
 			if (maxPerShot != null && firedSet.size >= maxPerShot) {
 				ship.debug("we did, goodbye (${firedSet.size}, $maxPerShot)")
+
 				if (shot.weapon is StarshipCooldownSubsystem) {
 					val clazz = shot.weapon::class.java
 

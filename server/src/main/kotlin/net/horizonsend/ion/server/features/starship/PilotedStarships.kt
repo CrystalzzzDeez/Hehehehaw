@@ -229,6 +229,7 @@ object PilotedStarships : IonServerComponent() {
 
 				warnDetectionFailure("Block at $x, $y, $z does not match! Expected $expected but found $found", data.blockKey)
 				return false
+
 			}
 
 			if (foundData.material == StarshipComputers.COMPUTER_TYPE) {
@@ -253,6 +254,7 @@ object PilotedStarships : IonServerComponent() {
 
 		return true
 	}
+
 
 	fun tryPilot(player: Player, data: StarshipData, callback: (ActiveControlledStarship) -> Unit = {}): Boolean {
 		if (data !is PlayerStarshipData) {

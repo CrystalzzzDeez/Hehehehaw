@@ -49,7 +49,6 @@ object NPCFakePilot : IonServerComponent(true) {
 		for ((ship, npc) in activeFakePilots) {
 			if (!isActive(ship)) continue
 			if (!isPiloted(ship)) continue
-
 			if (!npc.isSpawned) npc.spawn(getLocation(ship.data))
 
 			val entity = npc.entity ?: continue
@@ -125,17 +124,18 @@ object NPCFakePilot : IonServerComponent(true) {
 	}
 
 	fun isFakePilot(npc: NPC) = pilotRegistry.contains(npc)
+
 	fun isFakePilot(entity: Entity) = pilotRegistry.isNPC(entity)
 
 	/** If the fake pilot of the starship is destroyed */
 	@EventHandler
 	fun onPilotDestroyed(event: NPCDeathEvent) {
+
 		val npc = event.npc
 		if (!isFakePilot(npc)) return
 
 		val ship = activeFakePilots.filterValues { it == npc }.keys.firstOrNull() ?: return
 		Tasks.sync { PilotedStarships.unpilot(ship) }
-	}
 
 	@EventHandler
 	fun onPilotDamaged(event: NPCDamageByEntityEvent) {
@@ -147,5 +147,3 @@ object NPCFakePilot : IonServerComponent(true) {
 
 		val ship = activeFakePilots.filterValues { it == npc }.keys.firstOrNull() ?: return
 		Tasks.sync { ship.addToDamagers(damager.damager()) }
-	}
-}
