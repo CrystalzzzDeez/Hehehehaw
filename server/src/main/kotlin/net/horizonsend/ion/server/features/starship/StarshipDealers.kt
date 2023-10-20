@@ -7,13 +7,12 @@ import net.horizonsend.ion.common.extensions.information
 import net.horizonsend.ion.common.extensions.success
 import net.horizonsend.ion.common.extensions.userError
 import net.horizonsend.ion.server.IonServer
-import net.horizonsend.ion.server.configuration.ServerConfiguration
-import net.horizonsend.ion.server.features.misc.NewPlayerProtection.hasProtection
-import net.kyori.adventure.text.minimessage.MiniMessage.miniMessage
 import net.horizonsend.ion.server.IonServerComponent
+import net.horizonsend.ion.server.command.starship.BlueprintCommand
+import net.horizonsend.ion.server.configuration.ServerConfiguration
 import net.horizonsend.ion.server.features.achievements.Achievement
 import net.horizonsend.ion.server.features.achievements.rewardAchievement
-import net.horizonsend.ion.server.command.starship.BlueprintCommand
+import net.horizonsend.ion.server.features.misc.NewPlayerProtection.hasProtection
 import net.horizonsend.ion.server.features.nations.gui.item
 import net.horizonsend.ion.server.miscellaneous.utils.MenuHelper
 import net.horizonsend.ion.server.miscellaneous.utils.Vec3i
@@ -22,6 +21,7 @@ import net.horizonsend.ion.server.miscellaneous.utils.hasEnoughMoney
 import net.horizonsend.ion.server.miscellaneous.utils.placeSchematicEfficiently
 import net.horizonsend.ion.server.miscellaneous.utils.updateMeta
 import net.horizonsend.ion.server.miscellaneous.utils.withdrawMoney
+import net.kyori.adventure.text.minimessage.MiniMessage.miniMessage
 import org.bukkit.Location
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
@@ -32,7 +32,7 @@ import java.util.UUID
 
 object StarshipDealers : IonServerComponent() {
 	private val lastBuyTimes = mutableMapOf<ServerConfiguration.Ship, MutableMap<UUID, Long>>()
-	private val schematicMap = IonServer.configuration.soldShips.associateWith { it.schematic() }
+	val schematicMap = IonServer.configuration.soldShips.associateWith { it.schematic() }
 
 	@EventHandler(priority = EventPriority.LOWEST)
 	fun onClickNPC(event: NPCRightClickEvent) {
@@ -116,7 +116,7 @@ object StarshipDealers : IonServerComponent() {
 		}
 	}
 
-	private fun resolveTarget(schematic: Clipboard, destination: Location): Location {
+	fun resolveTarget(schematic: Clipboard, destination: Location): Location {
 		val target = destination.clone()
 
 		var xOffset = listOf(-25, 25).random()

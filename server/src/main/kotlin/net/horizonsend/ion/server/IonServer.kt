@@ -8,6 +8,7 @@ import net.horizonsend.ion.common.extensions.prefixProvider
 import net.horizonsend.ion.common.utils.Configuration
 import net.horizonsend.ion.common.utils.getUpdateMessage
 import net.horizonsend.ion.server.command.SLCommand
+import net.horizonsend.ion.server.configuration.AIShipConfiguration
 import net.horizonsend.ion.server.configuration.BalancingConfiguration
 import net.horizonsend.ion.server.configuration.GasConfiguration
 import net.horizonsend.ion.server.configuration.ServerConfiguration
@@ -33,7 +34,7 @@ import java.io.File
 
 val LegacySettings get() = IonServer.legacySettings
 val BalancingConfiguration get() = IonServer.balancing
-val ServerConfiguration get() = IonServer.balancing
+val ServerConfiguration get() = IonServer.configuration
 
 val sharedDataFolder by lazy { File(LegacySettings.sharedFolder).apply { mkdirs() } }
 
@@ -41,6 +42,7 @@ object IonServer : JavaPlugin() {
 	var balancing: BalancingConfiguration = Configuration.load(dataFolder, "balancing.json")
 	var configuration: ServerConfiguration = Configuration.load(dataFolder, "server.json")
 	var gasConfiguration: GasConfiguration = Configuration.load(dataFolder, "gasses.json")
+	var aiShipConfiguration: AIShipConfiguration = Configuration.load(dataFolder, "aiships.json")
 	var legacySettings: LegacyConfig = loadConfig(IonServer.dataFolder, "config") // Setting
 
 	override fun onEnable(): Unit =

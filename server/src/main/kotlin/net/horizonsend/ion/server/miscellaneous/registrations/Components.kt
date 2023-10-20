@@ -55,12 +55,20 @@ import net.horizonsend.ion.server.features.starship.StarshipDealers
 import net.horizonsend.ion.server.features.starship.StarshipDetection
 import net.horizonsend.ion.server.features.starship.active.ActiveStarshipMechanics
 import net.horizonsend.ion.server.features.starship.active.ActiveStarships
-import net.horizonsend.ion.server.features.starship.control.StarshipControl
-import net.horizonsend.ion.server.features.starship.control.StarshipCruising
+import net.horizonsend.ion.server.features.starship.active.StarshipDisplay
+import net.horizonsend.ion.server.features.starship.active.ai.AIManager
+import net.horizonsend.ion.server.features.starship.active.ai.AIStarshipMechanics
+import net.horizonsend.ion.server.features.starship.active.ai.spawning.AISpawningManager
+import net.horizonsend.ion.server.features.starship.active.ai.util.NPCFakePilot
+import net.horizonsend.ion.server.features.starship.control.movement.PlayerStarshipControl
+import net.horizonsend.ion.server.features.starship.control.movement.StarshipControl
+import net.horizonsend.ion.server.features.starship.control.movement.StarshipCruising
+import net.horizonsend.ion.server.features.starship.control.signs.StarshipSignControl
+import net.horizonsend.ion.server.features.starship.control.weaponry.PlayerStarshipWeaponry
+import net.horizonsend.ion.server.features.starship.control.weaponry.StarshipWeaponry
 import net.horizonsend.ion.server.features.starship.factory.StarshipFactories
 import net.horizonsend.ion.server.features.starship.hyperspace.Hyperspace
 import net.horizonsend.ion.server.features.starship.hyperspace.HyperspaceBeacons
-import net.horizonsend.ion.server.features.starship.hyperspace.HyperspaceMap
 import net.horizonsend.ion.server.features.starship.subsystem.shield.StarshipShields
 import net.horizonsend.ion.server.features.transport.Extractors
 import net.horizonsend.ion.server.features.transport.TransportConfig
@@ -129,13 +137,21 @@ val components: List<IonComponent> = listOf(
 
 	Hyperspace,
 	HyperspaceBeacons,
+
 	DeactivatedPlayerStarships,
 	ActiveStarships,
 	ActiveStarshipMechanics,
+
 	PilotedStarships,
 	StarshipDetection,
 	StarshipComputers,
+
 	StarshipControl,
+	PlayerStarshipControl,
+	StarshipWeaponry,
+	PlayerStarshipWeaponry,
+	StarshipSignControl,
+
 	StarshipShields,
 	StarshipCruising,
 	Hangars,
@@ -157,7 +173,6 @@ val components: List<IonComponent> = listOf(
 
 	SpaceMap,
 	NationsMap,
-	HyperspaceMap,
 	HyperspaceBeacons,
 	Collectors,
 	CityNPCs,
@@ -166,5 +181,12 @@ val components: List<IonComponent> = listOf(
     WaypointManager,
 
 	Bounties,
-	CustomMobSpawning
+
+	CustomMobSpawning,
+
+	AISpawningManager,
+	AIManager,
+	StarshipDisplay,
+	AIStarshipMechanics,
+	NPCFakePilot,
 )

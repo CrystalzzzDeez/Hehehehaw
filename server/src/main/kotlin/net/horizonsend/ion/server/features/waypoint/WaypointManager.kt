@@ -2,6 +2,7 @@ package net.horizonsend.ion.server.features.waypoint
 
 import net.horizonsend.ion.common.extensions.information
 import net.horizonsend.ion.common.extensions.serverError
+import net.horizonsend.ion.common.utils.text.repeatString
 import net.horizonsend.ion.server.IonServer
 import net.horizonsend.ion.server.IonServerComponent
 import net.horizonsend.ion.server.features.cache.PlayerCache
@@ -13,7 +14,6 @@ import net.horizonsend.ion.server.features.starship.hyperspace.Hyperspace
 import net.horizonsend.ion.server.miscellaneous.utils.Tasks
 import net.horizonsend.ion.server.miscellaneous.utils.actualType
 import net.horizonsend.ion.server.miscellaneous.utils.listen
-import net.horizonsend.ion.server.miscellaneous.utils.repeatString
 import org.bukkit.Bukkit
 import org.bukkit.Location
 import org.bukkit.entity.Player
@@ -22,7 +22,7 @@ import org.jgrapht.Graphs
 import org.jgrapht.alg.shortestpath.DijkstraShortestPath
 import org.jgrapht.graph.DefaultWeightedEdge
 import org.jgrapht.graph.SimpleDirectedWeightedGraph
-import java.util.*
+import java.util.UUID
 import kotlin.math.ceil
 
 object WaypointManager : IonServerComponent() {
@@ -67,9 +67,11 @@ object WaypointManager : IonServerComponent() {
         }
 
         listen<StarshipUnpilotedEvent> { event ->
-            updatePlayerGraph(event.player)
-            updatePlayerPaths(event.player)
-            updateNumJumps(event.player)
+			event.starship.playerPilot?.let {
+				updatePlayerGraph(it)
+				updatePlayerPaths(it)
+				updateNumJumps(it)
+			}
         }
     }
 
@@ -168,7 +170,7 @@ object WaypointManager : IonServerComponent() {
             val vertex = WaypointVertex(
                 name = planet.name,
                 icon = '\uE020',
-                loc = planet.location.toLocation(planet.spaceWorld)
+                loc = planet.location.toLocation(planet.spaceWorld!!)
             )
             mainGraph.addVertex(vertex)
         }

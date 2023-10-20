@@ -1,27 +1,29 @@
 package net.horizonsend.ion.server.features.starship.active
 
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet
-import net.horizonsend.ion.common.database.schema.starships.PlayerStarshipData
+import net.horizonsend.ion.common.database.schema.starships.StarshipData
 import net.horizonsend.ion.common.extensions.userError
 import net.horizonsend.ion.server.features.starship.Mass
 import net.horizonsend.ion.server.features.starship.subsystem.DirectionalSubsystem
 import net.horizonsend.ion.server.miscellaneous.utils.Tasks
+import net.horizonsend.ion.server.miscellaneous.utils.Vec3i
 import net.horizonsend.ion.server.miscellaneous.utils.blockKeyX
 import net.horizonsend.ion.server.miscellaneous.utils.blockKeyY
 import net.horizonsend.ion.server.miscellaneous.utils.blockKeyZ
 import net.kyori.adventure.audience.Audience
-import net.minecraft.core.BlockPos
+import net.starlegacy.feature.starship.active.ActiveStarshipHitbox
 import org.bukkit.Bukkit
+import org.bukkit.World
 import kotlin.math.min
 import kotlin.math.roundToInt
 
 object ActiveStarshipFactory {
-	fun createPlayerStarship(
+	fun createControlledStarship(
 		feedbackDestination: Audience,
-		data: PlayerStarshipData,
+		data: StarshipData,
 		blockCol: Collection<Long>,
-		carriedShips: Map<PlayerStarshipData, LongOpenHashSet>
-	): ActivePlayerStarship? {
+		carriedShips: Map<StarshipData, LongOpenHashSet>
+	): ActiveControlledStarship? {
 		Tasks.checkMainThread()
 
 		val blocks = LongOpenHashSet(blockCol)
@@ -35,12 +37,20 @@ object ActiveStarshipFactory {
 	}
 
 	private fun createStarship(
-		data: PlayerStarshipData,
+		data: StarshipData,
 		blocks: LongOpenHashSet,
-		carriedShips: Map<PlayerStarshipData, LongOpenHashSet>
-	): ActivePlayerStarship {
+		carriedShips: Map<StarshipData, LongOpenHashSet>
+	): ActiveControlledStarship {
 		val world = checkNotNull(Bukkit.getWorld(data.levelName))
 
+		val (centerOfMass, mass) = calculateCenterOfMass(world, blocks)
+
+		val hitbox = ActiveStarshipHitbox(blocks)
+
+		return ActiveControlledStarship(data, blocks, mass, centerOfMass, hitbox, carriedShips)
+	}
+
+	private fun calculateCenterOfMass(world: World, blocks: LongOpenHashSet): Pair<Vec3i, Double> {
 		val first = blocks.first()
 		var minX = blockKeyX(first)
 		var minY = blockKeyY(first)
@@ -83,14 +93,10 @@ object ActiveStarshipFactory {
 		val avgY = weightY / mass
 		val avgZ = weightZ / mass
 
-		val centerOfMass = BlockPos(avgX.roundToInt(), avgY.roundToInt(), avgZ.roundToInt())
-
-		val hitbox = ActiveStarshipHitbox(blocks)
-
-		return ActivePlayerStarship(data, blocks, mass, centerOfMass, hitbox, carriedShips)
+		return Vec3i(avgX.roundToInt(), avgY.roundToInt(), avgZ.roundToInt()) to mass
 	}
 
-	private fun initSubsystems(feedbackDestination: Audience, starship: ActivePlayerStarship) {
+	private fun initSubsystems(feedbackDestination: Audience, starship: ActiveControlledStarship) {
 		SubsystemDetector.detectSubsystems(starship)
 		prepareShields(starship)
 		starship.generateThrusterMap()
@@ -105,11 +111,11 @@ object ActiveStarshipFactory {
 			?: starship.forward
 	}
 
-	private fun prepareShields(starship: ActivePlayerStarship) {
+	private fun prepareShields(starship: ActiveControlledStarship) {
 		limitReinforcedShields(starship)
 	}
 
-	private fun limitReinforcedShields(starship: ActivePlayerStarship) {
+	private fun limitReinforcedShields(starship: ActiveControlledStarship) {
 		val reinforcedCount = starship.shields.count { it.isReinforcementEnabled }
 		val maxReinforced = min(3, starship.initialBlockCount / 7500)
 
@@ -123,11 +129,11 @@ object ActiveStarshipFactory {
 
 		// do it after passengers are detected
 		Tasks.syncDelay(1L) {
-			starship.sendMessage("&cEnhanced shields enhancements deactivated, found $reinforcedCount but ship only sustains $maxReinforced")
+			starship.userError("Enhanced shields enhancements deactivated, found $reinforcedCount but ship only sustains $maxReinforced")
 		}
 	}
 
-	private fun fixForwardOnlySubsystems(feedbackDestination: Audience, starship: ActivePlayerStarship) {
+	private fun fixForwardOnlySubsystems(feedbackDestination: Audience, starship: ActiveControlledStarship) {
 		for (weapon in starship.weapons.reversed()) {
 			if (weapon !is DirectionalSubsystem) {
 				continue

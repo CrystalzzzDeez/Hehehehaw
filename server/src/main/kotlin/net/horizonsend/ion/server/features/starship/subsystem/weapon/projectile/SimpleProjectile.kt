@@ -2,11 +2,11 @@ package net.horizonsend.ion.server.features.starship.subsystem.weapon.projectile
 
 import net.horizonsend.ion.server.command.admin.GracePeriod
 import net.horizonsend.ion.server.command.admin.debugRed
-import net.horizonsend.ion.server.features.starship.controllers.Controller
-import net.horizonsend.ion.server.features.starship.controllers.PlayerController
-import net.horizonsend.ion.server.features.progression.ShipKillXP
 import net.horizonsend.ion.server.features.starship.active.ActiveStarship
-import net.horizonsend.ion.server.features.starship.active.ActiveStarships
+import net.horizonsend.ion.server.features.starship.damager.Damager
+import net.horizonsend.ion.server.features.starship.damager.EntityDamager
+import net.horizonsend.ion.server.features.starship.damager.PlayerDamager
+import net.horizonsend.ion.server.features.starship.damager.addToDamagers
 import net.horizonsend.ion.server.features.starship.subsystem.shield.StarshipShields
 import org.bukkit.FluidCollisionMode
 import org.bukkit.Location
@@ -21,14 +21,12 @@ import org.bukkit.entity.LivingEntity
 import org.bukkit.util.RayTraceResult
 import org.bukkit.util.Vector
 import java.util.Locale
-import java.util.UUID
-import java.util.concurrent.atomic.AtomicInteger
 
 abstract class SimpleProjectile(
 	starship: ActiveStarship?,
 	var loc: Location,
 	var dir: Vector,
-	shooter: Controller?
+	shooter: Damager
 ) : Projectile(starship, shooter) {
 	abstract val range: Double
 	abstract val speed: Double
@@ -103,9 +101,7 @@ abstract class SimpleProjectile(
 	protected abstract fun moveVisually(oldLocation: Location, newLocation: Location, travel: Double)
 
 	private fun tryImpact(result: RayTraceResult, newLoc: Location): Boolean {
-		if (starship?.serverLevel?.world?.name?.lowercase(Locale.getDefault())
-				?.contains("hyperspace", ignoreCase=true)!!
-		) return false
+		if (loc.world.name.lowercase(Locale.getDefault()).contains("hyperspace", ignoreCase = true)) return false
 		if (GracePeriod.isGracePeriod) return false
 
 		val block: Block? = result.hitBlock
@@ -141,7 +137,7 @@ abstract class SimpleProjectile(
 		val impactedBlastResist = CraftMagicNumbers.getBlock(block?.type ?: Material.STONE_BRICKS).explosionResistance
 		val fraction = 1.0 + (armorBlastResist - impactedBlastResist) / 20.0
 
-		starship?.controller?.playerPilot?.debugRed(
+		starship?.debugRed(
 			"ship dmg: \n\n" +
 			"armorBlastResist = $armorBlastResist, \n" +
 			"impactedBlastResist = $impactedBlastResist, \n" +
@@ -153,6 +149,7 @@ abstract class SimpleProjectile(
 		StarshipShields.withExplosionPowerOverride(fraction * explosionPower * shieldDamageMultiplier) {
 			if (!hasHit) {
 				world.createExplosion(newLoc, explosionPower)
+
 				world.spawnParticle(
 					Particle.FLASH,
 					newLoc.x,
@@ -170,27 +167,12 @@ abstract class SimpleProjectile(
 			}
 		}
 
-		if (block != null && shooter is PlayerController)
-			addToDamagers(world, block, shooter)
+		if (block != null) addToDamagers(world, block, shooter)
 
-		if (entity != null && entity is LivingEntity)
-			if (shooter is PlayerController)
-				entity.damage(10.0, shooter.player)
-			else
-				entity.damage(10.0)
-	}
-
-	private fun addToDamagers(world: World, block: Block, shooter: PlayerController) {
-		val damagerId: UUID = shooter.player.uniqueId
-		val damagerSize: Int = starship?.initialBlockCount ?: 0
-		val damager = ShipKillXP.Damager(damagerId, damagerSize)
-		val x = block.x
-		val y = block.y
-		val z = block.z
-		for (otherStarship in ActiveStarships.getInWorld(world)) {
-			if (otherStarship != starship && otherStarship.contains(x, y, z)) {
-				otherStarship.damagers.getOrPut(damager) { AtomicInteger() }.incrementAndGet()
-			}
+		if (entity != null && entity is LivingEntity) when (shooter) {
+			is PlayerDamager -> entity.damage(10.0, shooter.player)
+			is EntityDamager -> entity.damage(10.0, shooter.entity)
+			else -> entity.damage(10.0)
 		}
 	}
 }

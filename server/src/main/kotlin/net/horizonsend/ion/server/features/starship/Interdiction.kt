@@ -7,15 +7,14 @@ import net.horizonsend.ion.server.IonServerComponent
 import net.horizonsend.ion.server.features.multiblock.Multiblocks
 import net.horizonsend.ion.server.features.multiblock.gravitywell.GravityWellMultiblock
 import net.horizonsend.ion.server.features.space.SpaceWorlds
-import net.horizonsend.ion.server.features.starship.active.ActivePlayerStarship
+import net.horizonsend.ion.server.features.starship.active.ActiveControlledStarship
 import net.horizonsend.ion.server.features.starship.active.ActiveStarship
 import net.horizonsend.ion.server.features.starship.active.ActiveStarships
-import net.horizonsend.ion.server.features.starship.control.StarshipCruising
+import net.horizonsend.ion.server.features.starship.control.movement.StarshipCruising
 import net.horizonsend.ion.server.miscellaneous.registrations.legacy.CustomItems
 import net.horizonsend.ion.server.miscellaneous.utils.LegacyItemUtils
 import net.horizonsend.ion.server.miscellaneous.utils.isWallSign
 import net.horizonsend.ion.server.miscellaneous.utils.listen
-import net.horizonsend.ion.server.miscellaneous.utils.toLocation
 import net.kyori.adventure.key.Key
 import net.kyori.adventure.sound.Sound
 import org.bukkit.World
@@ -58,8 +57,8 @@ object Interdiction : IonServerComponent() {
 
 	private fun toggleGravityWell(starship: ActiveStarship) {
 		when (starship.isInterdicting) {
-			true -> for (player in starship.serverLevel.world.getNearbyPlayers(
-				starship.centerOfMass.toLocation(starship.serverLevel.world),
+			true -> for (player in starship.world.getNearbyPlayers(
+				starship.centerOfMass.toLocation(starship.world),
 				starship.type.interdictionRange.toDouble()
 			)) {
 				player.playSound(
@@ -72,8 +71,8 @@ object Interdiction : IonServerComponent() {
 				)
 			}
 
-			false -> for (player in starship.serverLevel.world.getNearbyPlayers(
-				starship.centerOfMass.toLocation(starship.serverLevel.world),
+			false -> for (player in starship.world.getNearbyPlayers(
+				starship.centerOfMass.toLocation(starship.world),
 				starship.type.interdictionRange.toDouble()
 			)) {
 				player.playSound(
@@ -117,7 +116,7 @@ object Interdiction : IonServerComponent() {
 		}
 
 		for (cruisingShip in ActiveStarships.getInWorld(world)) {
-			if (cruisingShip !is ActivePlayerStarship) {
+			if (cruisingShip !is ActiveControlledStarship) {
 				continue
 			}
 
@@ -129,10 +128,10 @@ object Interdiction : IonServerComponent() {
 				continue
 			}
 
-			val pilot = cruisingShip.pilot ?: continue
+			val controlLoc = cruisingShip.playerPilot?.location ?: starship.centerOfMass.toLocation(starship.world)
 
-			if (pilot.world != sign.world) continue
-			if (pilot.location.distance(sign.location) > starship.type.interdictionRange) {
+			if (controlLoc.world != sign.world) continue
+			if (controlLoc.distance(sign.location) > starship.type.interdictionRange) {
 				continue
 			}
 

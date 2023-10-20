@@ -7,13 +7,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import net.horizonsend.ion.common.database.schema.Cryopod
-import net.horizonsend.ion.common.database.schema.starships.PlayerStarshipData
-import net.horizonsend.ion.server.events.EnterPlanetEvent
+import net.horizonsend.ion.common.database.schema.starships.StarshipData
+import net.horizonsend.ion.common.extensions.information
+import net.horizonsend.ion.common.extensions.serverError
 import net.horizonsend.ion.server.features.space.CachedPlanet
 import net.horizonsend.ion.server.features.space.Space
-import net.horizonsend.ion.server.features.starship.active.ActivePlayerStarship
+import net.horizonsend.ion.server.features.starship.active.ActiveControlledStarship
 import net.horizonsend.ion.server.features.starship.active.ActiveStarship
 import net.horizonsend.ion.server.features.starship.active.ActiveStarships
+import net.horizonsend.ion.server.features.starship.event.EnterPlanetEvent
 import net.horizonsend.ion.server.features.starship.isFlyable
 import net.horizonsend.ion.server.features.starship.subsystem.CryoSubsystem
 import net.horizonsend.ion.server.miscellaneous.utils.Vec3i
@@ -21,9 +23,7 @@ import net.horizonsend.ion.server.miscellaneous.utils.blockKey
 import net.horizonsend.ion.server.miscellaneous.utils.blockKeyX
 import net.horizonsend.ion.server.miscellaneous.utils.blockKeyY
 import net.horizonsend.ion.server.miscellaneous.utils.blockKeyZ
-import net.horizonsend.ion.server.miscellaneous.utils.minecraft
 import net.horizonsend.ion.server.miscellaneous.utils.nms
-import net.minecraft.core.BlockPos
 import net.minecraft.world.level.block.state.BlockState
 import org.bukkit.Location
 import org.bukkit.World
@@ -37,19 +37,19 @@ import kotlin.math.sqrt
 
 abstract class StarshipMovement(val starship: ActiveStarship, val newWorld: World? = null) {
 	// null if the ship is not a player ship
-	private val playerShip: ActivePlayerStarship? = starship as? ActivePlayerStarship
+	private val playerShip: ActiveControlledStarship? = starship as? ActiveControlledStarship
 
-	protected abstract fun displaceX(oldX: Int, oldZ: Int): Int
-	protected abstract fun displaceY(oldY: Int): Int
-	protected abstract fun displaceZ(oldZ: Int, oldX: Int): Int
-	protected abstract fun displaceLocation(oldLocation: Location): Location
+	abstract fun displaceX(oldX: Int, oldZ: Int): Int
+	abstract fun displaceY(oldY: Int): Int
+	abstract fun displaceZ(oldZ: Int, oldX: Int): Int
+	abstract fun displaceLocation(oldLocation: Location): Location
 	protected abstract fun movePassenger(passenger: Entity)
 	protected abstract fun onComplete()
 	protected abstract fun blockDataTransform(blockData: BlockState): BlockState
 
 	/* should only be called by the ship itself */
 	fun execute() {
-		val world1: World = starship.serverLevel.world
+		val world1: World = starship.world
 		val world2 = newWorld ?: world1
 
 		val oldLocationSet: LongOpenHashSet = starship.blocks
@@ -57,7 +57,7 @@ abstract class StarshipMovement(val starship: ActiveStarship, val newWorld: Worl
 		check(newWorld != world1) { "New world can't be the same as the current world" }
 
 		if (!ActiveStarships.isActive(starship)) {
-			starship.sendMessage("&cStarship not active, movement cancelled.")
+			starship.serverError("Starship not active, movement cancelled.")
 			return
 		}
 
@@ -67,14 +67,14 @@ abstract class StarshipMovement(val starship: ActiveStarship, val newWorld: Worl
 
 		if (displaceY(starship.max.y) >= world1.maxHeight) {
 			if (playerShip != null && exitPlanet(world1, playerShip)) {
-				starship.sendMessage("&7Exiting planet")
+				starship.information("Exiting Planet")
 				return
 			}
 
 			throw ConditionFailedException("Maximum height limit reached")
 		}
 
-		validateWorldBorders(findPassengers(world1), world2)
+		validateWorldBorders(starship.centerOfMass, findPassengers(world1), world2)
 
 		val oldLocationArray = oldLocationSet.filter {
 			isFlyable(world1.getBlockAt(blockKeyX(it), blockKeyY(it), blockKeyZ(it)).blockData.nms)
@@ -110,7 +110,7 @@ abstract class StarshipMovement(val starship: ActiveStarship, val newWorld: Worl
 			// this part will run on the main thread
 			movePassengers(findPassengers(world1))
 
-			starship.serverLevel = world2.minecraft
+			starship.world = world2
 			starship.blocks = newLocationSet
 			moveShipComputers(world2)
 			updateDirectControlCenter()
@@ -120,6 +120,7 @@ abstract class StarshipMovement(val starship: ActiveStarship, val newWorld: Worl
 
 			onComplete()
 		}
+
 		if (world1 != world2 && !world2.toString().contains("hyperspace", ignoreCase=true)) {
 			EnterPlanetEvent(world1, world2, starship.controller).callEvent()
 		}
@@ -147,7 +148,11 @@ abstract class StarshipMovement(val starship: ActiveStarship, val newWorld: Worl
 		return passengers.toList()
 	}
 
-	private fun validateWorldBorders(passengers: List<Entity>, world2: World) {
+	private fun validateWorldBorders(centerOfMass: Vec3i, passengers: List<Entity>, world2: World) {
+		if (!world2.worldBorder.isInside(centerOfMass.toLocation(world2)))
+			// Handle cases where there are no pilots
+			throw ConditionFailedException("Starship would be outside the world border!")
+
 		for (passenger: Entity in passengers) {
 			val newLoc: Location = displaceLocation(passenger.location)
 			newLoc.world = world2
@@ -193,7 +198,7 @@ abstract class StarshipMovement(val starship: ActiveStarship, val newWorld: Worl
 			return
 		}
 
-		for (data: PlayerStarshipData in playerShip.carriedShips.keys) {
+		for (data: StarshipData in playerShip.carriedShips.keys) {
 			data.blockKey = displacedKey(data.blockKey)
 			data.levelName = world2.name
 
@@ -213,7 +218,7 @@ abstract class StarshipMovement(val starship: ActiveStarship, val newWorld: Worl
 		val oldCenter = starship.centerOfMass
 		val newCenterX = displaceX(oldCenter.x, oldCenter.z)
 		val newCenterZ = displaceZ(oldCenter.z, oldCenter.x)
-		starship.centerOfMass = BlockPos(newCenterX, displaceY(oldCenter.y), newCenterZ)
+		starship.centerOfMass = Vec3i(newCenterX, displaceY(oldCenter.y), newCenterZ)
 	}
 
 	private fun updateSubsystems(world2: World) {
@@ -237,16 +242,16 @@ abstract class StarshipMovement(val starship: ActiveStarship, val newWorld: Worl
 		}
 	}
 
-	private fun exitPlanet(world: World, starship: ActivePlayerStarship): Boolean {
+	private fun exitPlanet(world: World, starship: ActiveControlledStarship): Boolean {
 		val planet: CachedPlanet = Space.getPlanet(world) ?: return false
-		val pilot: Player = starship.pilot ?: return false
+		val pilot: Player = starship.playerPilot ?: return false
 		val direction: Vector = pilot.location.direction
 		direction.setY(0)
 		direction.normalize()
 
 		val spaceWorld = planet.spaceWorld
 		if (spaceWorld == null) {
-			starship.sendMessage("&cWorld ${planet.spaceWorldName} not found")
+			starship.serverError("World ${planet.spaceWorldName} not found")
 			return false
 		}
 

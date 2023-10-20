@@ -4,11 +4,12 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet
 import net.horizonsend.ion.common.utils.miscellaneous.d
 import net.horizonsend.ion.server.IonServerComponent
 import net.horizonsend.ion.server.command.admin.debugRed
-import net.horizonsend.ion.server.features.starship.active.ActivePlayerStarship
+import net.horizonsend.ion.server.features.starship.active.ActiveControlledStarship
 import net.horizonsend.ion.server.features.starship.active.ActiveStarship
 import net.horizonsend.ion.server.features.starship.active.ActiveStarships
 import net.horizonsend.ion.server.features.starship.event.StarshipActivatedEvent
 import net.horizonsend.ion.server.features.starship.event.StarshipDeactivatedEvent
+import net.horizonsend.ion.server.listener.misc.ProtectionListener
 import net.horizonsend.ion.server.miscellaneous.utils.PerWorld
 import net.horizonsend.ion.server.miscellaneous.utils.SLTextStyle
 import net.horizonsend.ion.server.miscellaneous.utils.Tasks
@@ -19,7 +20,6 @@ import net.horizonsend.ion.server.miscellaneous.utils.blockKeyZ
 import net.horizonsend.ion.server.miscellaneous.utils.distanceSquared
 import net.horizonsend.ion.server.miscellaneous.utils.minecraft
 import net.horizonsend.ion.server.miscellaneous.utils.nms
-import net.horizonsend.ion.server.miscellaneous.utils.toLocation
 import net.minecraft.core.BlockPos
 import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket
 import net.minecraft.world.level.Level
@@ -31,6 +31,7 @@ import org.bukkit.Sound
 import org.bukkit.World
 import org.bukkit.block.Block
 import org.bukkit.boss.BarColor
+import org.bukkit.event.Cancellable
 import org.bukkit.event.EventHandler
 import org.bukkit.event.EventPriority
 import org.bukkit.event.block.BlockExplodeEvent
@@ -62,7 +63,7 @@ object StarshipShields : IonServerComponent() {
 	@EventHandler
 	fun onActivate(event: StarshipActivatedEvent) {
 		val starship = event.starship
-		val worldID = starship.serverLevel.world.uid
+		val worldID = starship.world.uid
 
 		for (shield in starship.shields) {
 			val shieldPos = ShieldPos(worldID, shield.pos)
@@ -73,7 +74,7 @@ object StarshipShields : IonServerComponent() {
 	@EventHandler
 	fun onDeactivate(event: StarshipDeactivatedEvent) {
 		val starship = event.starship
-		val worldID = starship.serverLevel.world.uid
+		val worldID = starship.world.uid
 
 		for (shield in starship.shields) {
 			val shieldPos = ShieldPos(worldID, shield.pos)
@@ -93,25 +94,23 @@ object StarshipShields : IonServerComponent() {
 	@EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
 	fun onBlockExplode(event: BlockExplodeEvent) {
 		val block = event.block
-
-		val blockList = event.blockList()
-		val power = explosionPowerOverride ?: getExplosionPower(block, blockList)
-		onShieldImpact(block.location.toCenterLocation(), blockList, power)
-		if (LAST_EXPLOSION_ABSORBED) {
-			event.isCancelled = true
-		}
+		handleExplosion(block, event.blockList(), event)
 	}
 
 	@EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
 	fun onEntityExplode(event: EntityExplodeEvent) {
 		val location = event.location
 		val block = location.block
-		val blockList = event.blockList()
+		handleExplosion(block, event.blockList(), event)
+	}
+
+	private fun handleExplosion(block: Block, blockList: MutableList<Block>, event: Cancellable) {
+		if (ProtectionListener.isProtectedCity(block.location)) return
 		val power = explosionPowerOverride ?: getExplosionPower(block, blockList)
-		onShieldImpact(location.toCenterLocation(), blockList, power)
-		if (LAST_EXPLOSION_ABSORBED) {
-			event.isCancelled = true
-		}
+
+		onShieldImpact(block.location.toCenterLocation(), blockList, power)
+
+		if (LAST_EXPLOSION_ABSORBED) event.isCancelled = true
 	}
 
 	private fun getExplosionPower(center: Block, blockList: List<Block>): Double {
@@ -126,14 +125,14 @@ object StarshipShields : IonServerComponent() {
 		val iterator = updatedStarships.iterator()
 		while (iterator.hasNext()) {
 			val ship = iterator.next()
-			if (ship is ActivePlayerStarship) {
+			if (ship is ActiveControlledStarship) {
 				updateShieldBars(ship)
 			}
 		}
 	}
 
 	@Synchronized
-	fun updateShieldBars(ship: ActivePlayerStarship) {
+	fun updateShieldBars(ship: ActiveControlledStarship) {
 		for ((name, bossBar) in ship.shieldBars) {
 			var amount = 0
 			var isReinforced = false
@@ -326,7 +325,7 @@ object StarshipShields : IonServerComponent() {
 			addFlare(containedBlocks, shield, flaringBlocks, flaredBlocks, nmsLevel)
 		}
 
-		starship.controller?.playerPilot?.debugRed("shield damage = ${shield.power} - $usage = ${shield.power - usage}")
+		starship.debugRed("shield damage = ${shield.power} - $usage = ${shield.power - usage}")
 		shield.power = shield.power - usage
 
 		if (usage > 0) {
@@ -409,11 +408,4 @@ object StarshipShields : IonServerComponent() {
 			}
 		}
 	}
-
-	fun cartesianProduct(a: Set<*>, b: Set<*>, vararg sets: Set<*>): Set<List<*>> =
-		(setOf(a, b).plus(sets))
-			.fold(listOf(listOf<Any?>())) { acc, set ->
-				acc.flatMap { list -> set.map { element -> list + element } }
-			}
-			.toSet()
 }

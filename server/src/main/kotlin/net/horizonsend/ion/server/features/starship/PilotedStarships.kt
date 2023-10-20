@@ -3,14 +3,21 @@ package net.horizonsend.ion.server.features.starship
 import net.horizonsend.ion.common.database.schema.misc.SLPlayer
 import net.horizonsend.ion.common.database.schema.starships.Blueprint
 import net.horizonsend.ion.common.database.schema.starships.PlayerStarshipData
+import net.horizonsend.ion.common.database.schema.starships.StarshipData
 import net.horizonsend.ion.common.extensions.information
 import net.horizonsend.ion.common.extensions.successActionMessage
 import net.horizonsend.ion.common.extensions.userError
 import net.horizonsend.ion.common.extensions.userErrorActionMessage
 import net.horizonsend.ion.common.redis
 import net.horizonsend.ion.server.IonServerComponent
-import net.horizonsend.ion.server.features.starship.active.ActivePlayerStarship
+import net.horizonsend.ion.server.features.starship.active.ActiveControlledStarship
 import net.horizonsend.ion.server.features.starship.active.ActiveStarships
+import net.horizonsend.ion.server.features.starship.active.ai.AIStarshipFactory.warnDetectionFailure
+import net.horizonsend.ion.server.features.starship.control.controllers.Controller
+import net.horizonsend.ion.server.features.starship.control.controllers.NoOpController
+import net.horizonsend.ion.server.features.starship.control.controllers.player.ActivePlayerController
+import net.horizonsend.ion.server.features.starship.control.controllers.player.PlayerController
+import net.horizonsend.ion.server.features.starship.control.controllers.player.UnpilotedController
 import net.horizonsend.ion.server.features.starship.event.StarshipPilotEvent
 import net.horizonsend.ion.server.features.starship.event.StarshipPilotedEvent
 import net.horizonsend.ion.server.features.starship.event.StarshipUnpilotEvent
@@ -30,6 +37,7 @@ import net.horizonsend.ion.server.miscellaneous.utils.bukkitWorld
 import net.horizonsend.ion.server.miscellaneous.utils.createData
 import net.horizonsend.ion.server.miscellaneous.utils.isPilot
 import net.horizonsend.ion.server.miscellaneous.utils.listen
+import net.kyori.adventure.audience.Audience
 import net.kyori.adventure.key.Key
 import net.kyori.adventure.sound.Sound
 import net.kyori.adventure.text.Component
@@ -46,43 +54,66 @@ import org.bukkit.boss.BossBar
 import org.bukkit.entity.Player
 import org.bukkit.event.player.PlayerQuitEvent
 import java.util.Locale
+import java.util.UUID
 import kotlin.collections.component1
 import kotlin.collections.component2
 import kotlin.collections.set
 
 object PilotedStarships : IonServerComponent() {
-	internal val map = mutableMapOf<Player, ActivePlayerStarship>()
+	internal val map = mutableMapOf<Controller, ActiveControlledStarship>()
 
 	override fun onEnable() {
 		listen<PlayerQuitEvent> { event ->
-			map[event.player]?.let { unpilot(it, true) } // release the player's starship if they are piloting one
+			val controller = ActivePlayerController[event.player] ?: return@listen
+
+			map[controller]?.let { unpilot(it) } // release the player's starship if they are piloting one
 		}
 	}
 
-	fun pilot(starship: ActivePlayerStarship, player: Player) {
+	fun pilot(starship: ActiveControlledStarship, controller: Controller, callback: (ActiveControlledStarship) -> Unit = {}) {
 		Tasks.checkMainThread()
+
 		check(!starship.isExploding)
-		check(!map.containsKey(player)) { "${player.name} is already piloting a starship" }
+
+		map[controller] = starship
+		starship.controller = controller
+
+		setupPassengers(starship)
+
+		setupShieldDisplayIndicators(starship)
+
+		StarshipShields.updateShieldBars(starship)
+
+		removeExtractors(starship)
+
+		callback(starship)
+	}
+
+	fun pilot(starship: ActiveControlledStarship, player: Player) {
+		ActivePlayerController[player]?.let { check(!map.containsKey(it)) { "${player.name} is already piloting a starship" } }
 		check(starship.isWithinHitbox(player)) { "${player.name} is not in their ship!" }
 		removeFromCurrentlyRidingShip(player)
-		map[player] = starship
-		starship.pilot = player
-		setupPassengers(starship)
-		setupShieldDisplayIndicators(starship)
-		StarshipShields.updateShieldBars(starship)
-		saveLoadshipData(starship, player)
-		removeExtractors(starship)
-		StarshipPilotedEvent(starship, player).callEvent()
-		starship.oldpilot = null
+
+		pilot(starship, ActivePlayerController(player, starship)) { ship ->
+			saveLoadshipData(ship, player)
+			StarshipPilotedEvent(ship, player).callEvent()
+		}
+	}
+
+	fun changeController(starship: ActiveControlledStarship, newController: Controller) {
+		map.remove(starship.controller)
+
+		map[newController] = starship
 	}
 
 	private fun removeFromCurrentlyRidingShip(player: Player) {
 		ActiveStarships.findByPassenger(player)?.removePassenger(player.uniqueId)
 	}
 
-	private fun setupPassengers(starship: ActivePlayerStarship) {
-		starship.addPassenger(starship.requirePilot().uniqueId)
-		for (otherPlayer in starship.serverLevel.world.players) {
+	private fun setupPassengers(starship: ActiveControlledStarship) {
+		starship.playerPilot?.let { starship.addPassenger(it.uniqueId) }
+
+		for (otherPlayer in starship.world.players) {
 			if (!starship.isWithinHitbox(otherPlayer)) {
 				continue
 			}
@@ -93,7 +124,7 @@ object PilotedStarships : IonServerComponent() {
 		}
 	}
 
-	private fun setupShieldDisplayIndicators(starship: ActivePlayerStarship) {
+	private fun setupShieldDisplayIndicators(starship: ActiveControlledStarship) {
 		starship.shields
 			.distinctBy(ShieldSubsystem::name)
 			.associateByTo(starship.shieldBars, ShieldSubsystem::name) { shield: ShieldSubsystem ->
@@ -107,11 +138,10 @@ object PilotedStarships : IonServerComponent() {
 			}
 	}
 
-	private fun saveLoadshipData(starship: ActivePlayerStarship, player: Player) {
+	private fun saveLoadshipData(starship: ActiveControlledStarship, player: Player) {
 		val schematic = StarshipSchematic.createSchematic(starship)
 
-		val key =
-			"starships.lastpiloted.${player.uniqueId}.${starship.serverLevel.world.name.lowercase(Locale.getDefault())}"
+		val key = "starships.lastpiloted.${player.uniqueId}.${starship.world.name.lowercase(Locale.getDefault())}"
 
 		Tasks.async {
 			redis {
@@ -120,50 +150,116 @@ object PilotedStarships : IonServerComponent() {
 		}
 	}
 
-	private fun removeExtractors(starship: ActivePlayerStarship) {
+	private fun removeExtractors(starship: ActiveControlledStarship) {
 		starship.iterateBlocks { x, y, z ->
-			if (starship.serverLevel.world.getBlockAt(x, y, z).type == Material.CRAFTING_TABLE) {
-				Extractors.remove(starship.serverLevel.world, Vec3i(x, y, z))
+			if (starship.world.getBlockAt(x, y, z).type == Material.CRAFTING_TABLE) {
+				Extractors.remove(starship.world, Vec3i(x, y, z))
 			}
 		}
 	}
 
-	fun isPiloted(starship: ActivePlayerStarship): Boolean {
-		return starship.pilot != null
+	fun isPiloted(starship: ActiveControlledStarship): Boolean {
+		if (starship.controller is UnpilotedController) return false
+		return starship.controller !is NoOpController
 	}
 
-	fun unpilot(starship: ActivePlayerStarship, normal: Boolean = false) {
+	fun canTakeControl(starship: ActiveControlledStarship, player: Player): Boolean {
+		return (starship.controller as? PlayerController)?.player == player
+	}
+
+	fun unpilot(starship: ActiveControlledStarship) {
 		Tasks.checkMainThread()
-		val player = starship.pilot ?: error("Starship $starship is not piloted")
-		if (normal) {
-			ActiveStarships.allPlayerShips().filter { it.oldpilot == player }.forEach {
-				player.information(
-					"You already have a ship unpiloted, on ${it.serverLevel.world.name} at " +
-						"${it.centerOfMass.x} ${it.centerOfMass.y} ${it.centerOfMass.z}, " +
-						"that ship will now be released."
-				)
-				DeactivatedPlayerStarships.deactivateAsync(it)
-			}
+		val controller = starship.controller
+
+		map.remove(starship.controller)
+
+		val unpilotedController = when (starship.controller) {
+			is PlayerController -> UnpilotedController(starship.controller as PlayerController)
+			else -> NoOpController(starship)
 		}
-		map.remove(player)
-		starship.oldpilot = player
-		starship.pilot = null
+
+		starship.controller = unpilotedController
 		starship.lastUnpilotTime = System.nanoTime()
+
 		starship.clearPassengers()
+
 		starship.shieldBars.values.forEach { it.removeAll() }
 		starship.shieldBars.clear()
 
 		starship.iterateBlocks { x, y, z ->
-			if (starship.serverLevel.world.getBlockAt(x, y, z).type == Material.CRAFTING_TABLE) {
-				Extractors.add(starship.serverLevel.world, Vec3i(x, y, z))
+			if (starship.world.getBlockAt(x, y, z).type == Material.CRAFTING_TABLE) {
+				Extractors.add(starship.world, Vec3i(x, y, z))
 			}
 		}
 
-		StarshipUnpilotedEvent(starship, player).callEvent()
+		StarshipUnpilotedEvent(starship, controller).callEvent()
 	}
 
-	operator fun get(player: Player): ActivePlayerStarship? = map[player]
-	fun tryPilot(player: Player, data: PlayerStarshipData, callback: (ActivePlayerStarship) -> Unit = {}): Boolean {
+	operator fun get(player: Player): ActiveControlledStarship? = ActivePlayerController[player]?.let { map[it] }
+	operator fun get(player: UUID): ActiveControlledStarship? = map.filter {
+		(it.key as? PlayerController)?.player?.uniqueId == player
+	}.values.firstOrNull()
+	operator fun get(controller: Controller) = map[controller]
+
+	fun activateWithoutPilot(
+		feedbackDestination: Audience,
+		data: StarshipData,
+		createController: (ActiveControlledStarship) -> Controller,
+		callback: (ActiveControlledStarship) -> Unit = {}
+	): Boolean {
+		val world: World = data.bukkitWorld()
+
+		val state: StarshipState? = DeactivatedPlayerStarships.getSavedState(data)
+
+		if (state == null) {
+			warnDetectionFailure("Not detected.", data.blockKey)
+			return false
+		}
+
+		for ((key: Long, blockData: BlockData) in state.blockMap) {
+			val x: Int = blockKeyX(key)
+			val y: Int = blockKeyY(key)
+			val z: Int = blockKeyZ(key)
+			val foundData: BlockData = world.getBlockAt(x, y, z).blockData
+
+			if (blockData.material != foundData.material) {
+				val expected: String = blockData.material.name
+				val found: String = foundData.material.name
+
+				warnDetectionFailure("Block at $x, $y, $z does not match! Expected $expected but found $found", data.blockKey)
+				return false
+			}
+
+			if (foundData.material == StarshipComputers.COMPUTER_TYPE) {
+				if (ActiveStarships.getByComputerLocation(world, x, y, z) != null) {
+					warnDetectionFailure("Block at $x, $y, $z is the computer of a piloted ship!", data.blockKey)
+					return false
+				}
+			}
+		}
+
+		DeactivatedPlayerStarships.activateAsync(feedbackDestination, data, state, listOf()) { activePlayerStarship ->
+			pilot(activePlayerStarship, createController(activePlayerStarship))
+
+			activePlayerStarship.sendMessage(
+				Component.text("Activated and piloted ").color(NamedTextColor.GREEN)
+					.append(getDisplayNameComponent(data))
+					.append(Component.text(" with ${activePlayerStarship.initialBlockCount} blocks."))
+			)
+
+			callback(activePlayerStarship)
+		}
+
+		return true
+	}
+
+	fun tryPilot(player: Player, data: StarshipData, callback: (ActiveControlledStarship) -> Unit = {}): Boolean {
+		if (data !is PlayerStarshipData) {
+			player.userError("You cannot pilot a non-player starship!")
+
+			return false
+		}
+
 		if (!data.isPilot(player)) {
 			val captain = SLPlayer.getName(data.captain) ?: "null, <red>something's gone wrong, please contact staff"
 
@@ -171,6 +267,7 @@ object PilotedStarships : IonServerComponent() {
 
 			return false
 		}
+
 		if (!data.starshipType.actualType.canUse(player)) {
 			player.userErrorActionMessage("You are not high enough level to pilot this!")
 			return false
@@ -179,7 +276,7 @@ object PilotedStarships : IonServerComponent() {
 		val pilotedStarship = PilotedStarships[player]
 		if (pilotedStarship != null) {
 			if (pilotedStarship.dataId == data._id) {
-				tryRelease(pilotedStarship, player)
+				tryRelease(pilotedStarship)
 				return false
 			}
 
@@ -195,7 +292,7 @@ object PilotedStarships : IonServerComponent() {
 		val activeStarship = ActiveStarships[data._id]
 
 		if (activeStarship != null) {
-			if (isPiloted(activeStarship)) {
+			if (!canTakeControl(activeStarship, player)) {
 				player.userErrorActionMessage("That starship is already being piloted!")
 				return false
 			}
@@ -212,7 +309,7 @@ object PilotedStarships : IonServerComponent() {
 
 		val world: World = data.bukkitWorld()
 
-		val state: PlayerStarshipState? = DeactivatedPlayerStarships.getSavedState(data)
+		val state: StarshipState? = DeactivatedPlayerStarships.getSavedState(data)
 
 		if (state == null) {
 			player.userErrorActionMessage("Starship has not been detected")
@@ -223,7 +320,7 @@ object PilotedStarships : IonServerComponent() {
 			nearbyPlayer.playSound(Sound.sound(Key.key("minecraft:block.beacon.activate"), Sound.Source.AMBIENT, 5f, 0.05f))
 		}
 
-		val carriedShips = mutableListOf<PlayerStarshipData>()
+		val carriedShips = mutableListOf<StarshipData>()
 
 		for ((key: Long, blockData: BlockData) in state.blockMap) {
 			val x: Int = blockKeyX(key)
@@ -249,14 +346,20 @@ object PilotedStarships : IonServerComponent() {
 				}
 
 				DeactivatedPlayerStarships[world, x, y, z]?.takeIf { it._id != data._id }?.also { carried ->
-					if (!carried.isPilot(player)) {
-						player.userError(
-							"Block at $x $y $z is a ship computer which you are not a pilot of!"
-						)
+					if (carried is PlayerStarshipData) { //TODO access system for non-player ships
+						if (!carried.isPilot(player)) {
+							player.userError(
+								"Block at $x $y $z is a ship computer which you are not a pilot of!"
+							)
+							return false
+						}
+
+						carriedShips.add(carried)
+					} else {
+						player.userError("Block at $x, $y, $z is a non-player ship computer!")
+
 						return false
 					}
-
-					carriedShips.add(carried)
 				}
 			}
 		}
@@ -312,30 +415,30 @@ object PilotedStarships : IonServerComponent() {
 		return true
 	}
 
-	fun tryRelease(starship: ActivePlayerStarship, player: Player): Boolean {
-		if (!StarshipUnpilotEvent(starship, player).callEvent()) {
+	fun tryRelease(starship: ActiveControlledStarship): Boolean {
+		if (!StarshipUnpilotEvent(starship, starship.controller).callEvent()) {
 			return false
 		}
-		if (starship.serverLevel.world.name.contains("hyperspace", ignoreCase=true)) return false
+		if (starship.world.name.contains("hyperspace", ignoreCase=true)) return false
 
 		unpilot(starship)
 		DeactivatedPlayerStarships.deactivateAsync(starship)
-		for (nearbyPlayer in player.world.getNearbyPlayers(player.location, 500.0)) {
+		for (nearbyPlayer in starship.world.getNearbyPlayers(starship.centerOfMass.toLocation(starship.world), 500.0)) {
 			nearbyPlayer.playSound(Sound.sound(Key.key("minecraft:block.beacon.deactivate"), Sound.Source.AMBIENT, 5f, 0.05f))
 		}
-		player.successActionMessage("Released ${getDisplayName(starship.data)}")
+		starship.controller.successActionMessage("Released ${getDisplayName(starship.data)}")
 		return true
 	}
 
-	fun getDisplayName(data: PlayerStarshipData): String {
+	fun getDisplayName(data: StarshipData): String {
 		return data.name ?: data.starshipType.actualType.formatted
 	}
 
-	fun getDisplayNameComponent(data: PlayerStarshipData): Component = data.name?.let {
+	fun getDisplayNameComponent(data: StarshipData): Component = data.name?.let {
 		MiniMessage.miniMessage().deserialize(it)
 	} ?: MiniMessage.miniMessage().deserialize(data.starshipType.actualType.formatted)
 
-	fun getRawDisplayName(data: PlayerStarshipData): String {
+	fun getRawDisplayName(data: StarshipData): String {
 		return (MiniMessage.miniMessage().deserialize(getDisplayName(data)) as TextComponent).content()
 	}
 }

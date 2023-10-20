@@ -19,6 +19,7 @@ import net.horizonsend.ion.common.utils.miscellaneous.d
 import net.horizonsend.ion.common.utils.miscellaneous.i
 import net.horizonsend.ion.common.utils.miscellaneous.toCreditsString
 import net.horizonsend.ion.common.utils.miscellaneous.toText
+import net.horizonsend.ion.common.utils.text.isAlphanumeric
 import net.horizonsend.ion.server.IonServer
 import net.horizonsend.ion.server.features.cache.PlayerCache
 import net.horizonsend.ion.server.features.nations.gui.item
@@ -331,7 +332,6 @@ internal object SettlementZoneCommand : net.horizonsend.ion.server.command.SLCom
 				val price = zone.cachedPrice
 				val rent = zone.cachedRent
 
-				@Suppress("DEPRECATION")
 				val item: ItemStack = when {
 					owner != null -> {
 						skullItem(owner.uuid, getPlayerName(owner))

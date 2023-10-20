@@ -11,13 +11,13 @@ import net.horizonsend.ion.server.miscellaneous.utils.WeightedRandomList
 import net.horizonsend.ion.server.miscellaneous.utils.actualType
 import net.horizonsend.ion.server.miscellaneous.utils.nms
 import net.horizonsend.ion.server.miscellaneous.utils.readSchematic
-import net.minecraft.core.BlockPos
 import net.minecraft.world.level.block.state.BlockState
 import org.bukkit.Bukkit
 import org.bukkit.Location
 import org.bukkit.Material
 import org.bukkit.World
 import org.bukkit.entity.EntityType
+import org.bukkit.util.Vector
 
 @Serializable
 data class ServerConfiguration(
@@ -26,6 +26,7 @@ data class ServerConfiguration(
 	val beacons: List<HyperspaceBeacon> = listOf(),
 	val spaceGenConfig: Map<String, AsteroidConfig> = mapOf(),
 	val soldShips: List<Ship> = listOf(),
+	val explosionRegenConfig: ExplosionRegenerationConfig = ExplosionRegenerationConfig(),
 	val mobSpawns: Map<String, PlanetSpawnConfig> = mapOf(),
 ) {
 	/**
@@ -190,7 +191,7 @@ data class ServerConfiguration(
 		fun bukkitWorld(): World = Bukkit.getWorld(world) ?: throw
 		kotlin.NullPointerException("Could not find world $world")
 
-		fun toBlockPos(): BlockPos = BlockPos(x, y, z)
+		fun toVector(): Vector = Vector(x, y, z)
 
 		fun toVec3i(): Vec3i = Vec3i(x, y, z)
 
@@ -215,7 +216,7 @@ data class ServerConfiguration(
 		val shipType: StarshipType = shipClass.actualType
 
 		@kotlinx.serialization.Transient
-		private val schematicFile = IonServer.dataFolder.resolve("sold_ships").resolve("$schematicName.schem")
+		val schematicFile = IonServer.dataFolder.resolve("sold_ships").resolve("$schematicName.schem")
 
 		fun schematic(): Clipboard = readSchematic(schematicFile)!!
 	}
@@ -239,4 +240,18 @@ data class ServerConfiguration(
 			return list
 		}
 	}
+
+	/**
+	 * @param regenDelay time in ticks
+	 * @param
+	 *
+	 **/
+	@Serializable
+	data class ExplosionRegenerationConfig(
+		val regenDelay: Double = 5.0,
+		val distanceDelay: Double = 2.0,
+		val distanceDelayCap: Int = 6,
+		val placementIntensity: Double = 5.0,
+		val ignoredWorlds: List<String> = listOf()
+	)
 }

@@ -2,16 +2,14 @@ package net.horizonsend.ion.server.features.economy.city
 
 import net.citizensnpcs.api.CitizensAPI
 import net.citizensnpcs.api.event.NPCRightClickEvent
-import net.citizensnpcs.api.npc.MemoryNPCDataStore
 import net.citizensnpcs.api.npc.NPC
 import net.citizensnpcs.api.npc.NPCRegistry
 import net.citizensnpcs.trait.LookClose
 import net.citizensnpcs.trait.SkinTrait
 import net.horizonsend.ion.common.database.Oid
-import net.horizonsend.ion.server.IonServer
-import net.horizonsend.ion.server.IonServerComponent
 import net.horizonsend.ion.common.database.schema.economy.CityNPC
 import net.horizonsend.ion.common.database.schema.nations.Territory
+import net.horizonsend.ion.server.IonServerComponent
 import net.horizonsend.ion.server.features.economy.bazaar.Bazaars
 import net.horizonsend.ion.server.features.economy.bazaar.Merchants
 import net.horizonsend.ion.server.features.economy.cargotrade.ShipmentManager
@@ -20,6 +18,8 @@ import net.horizonsend.ion.server.features.nations.region.types.RegionTerritory
 import net.horizonsend.ion.server.miscellaneous.utils.SLTextStyle
 import net.horizonsend.ion.server.miscellaneous.utils.Skins
 import net.horizonsend.ion.server.miscellaneous.utils.Tasks
+import net.horizonsend.ion.server.miscellaneous.utils.createNamedMemoryRegistry
+import net.horizonsend.ion.server.miscellaneous.utils.isCitizensLoaded
 import net.horizonsend.ion.server.miscellaneous.utils.loadChunkAsync
 import org.bukkit.Location
 import org.bukkit.World
@@ -33,7 +33,6 @@ import java.util.UUID
  * Manages NPCs for cities, handles the synchronization of them with the worlds
  */
 object CityNPCs : IonServerComponent(true) {
-	private val isCitizensLoaded get() = IonServer.server.pluginManager.isPluginEnabled("Citizens")
 
 	private lateinit var citizensRegistry: NPCRegistry
 	private val npcTypeMap = mutableMapOf<UUID, CityNPC.Type>()
@@ -116,7 +115,7 @@ object CityNPCs : IonServerComponent(true) {
 		Tasks.sync {
 			npcTypeMap.clear()
 			clearCitizensNpcs()
-			citizensRegistry = CitizensAPI.createNamedNPCRegistry("trade-city-npcs", MemoryNPCDataStore())
+			citizensRegistry = createNamedMemoryRegistry("trade-city-npcs")
 
 			val spawned = mutableSetOf<Oid<CityNPC>>()
 
@@ -196,4 +195,8 @@ object CityNPCs : IonServerComponent(true) {
 			CitizensAPI.removeNamedNPCRegistry("trade-city-npcs")
 		}
 	}
+
+	fun Player.isCityNpc() = citizensRegistry.isNPC(this)
+
+	fun Player.isNpc() = CitizensAPI.getNPCRegistries().any { it.isNPC(this) }
 }

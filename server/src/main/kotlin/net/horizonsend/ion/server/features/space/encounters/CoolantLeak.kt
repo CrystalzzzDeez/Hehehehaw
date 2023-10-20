@@ -10,12 +10,11 @@ import net.horizonsend.ion.server.miscellaneous.registrations.NamespacedKeys.LOC
 import net.horizonsend.ion.server.miscellaneous.registrations.NamespacedKeys.X
 import net.horizonsend.ion.server.miscellaneous.registrations.NamespacedKeys.Y
 import net.horizonsend.ion.server.miscellaneous.registrations.NamespacedKeys.Z
+import net.horizonsend.ion.server.miscellaneous.utils.Vec3i
 import net.horizonsend.ion.server.miscellaneous.utils.highlightBlock
 import net.horizonsend.ion.server.miscellaneous.utils.runnable
-import net.minecraft.core.BlockPos
-import net.minecraft.nbt.CompoundTag
 import net.horizonsend.ion.server.miscellaneous.utils.spherePoints
-import net.horizonsend.ion.server.miscellaneous.utils.toBlockPos
+import net.minecraft.nbt.CompoundTag
 import org.bukkit.Material
 import org.bukkit.Particle
 import org.bukkit.Sound
@@ -32,14 +31,14 @@ object CoolantLeak : Encounter(identifier = "coolant_leak") {
 	private const val MAX_RADIUS = 15.0
 	private const val MAX_ATTEMPTS = 500
 
-	private fun getLever(chest: Chest): BlockPos = BlockPos(
+	private fun getLever(chest: Chest): Vec3i = Vec3i(
 		(Encounters.getChestFlag(chest, X))!!.toInt(),
 		(Encounters.getChestFlag(chest, Y))!!.toInt(),
 		(Encounters.getChestFlag(chest, Z))!!.toInt()
 	)
 
 	private fun placeLever(chest: Chest) {
-		val chestPos = BlockPos(chest.x, chest.y, chest.z)
+		val chestPos = Vec3i(chest.x, chest.y, chest.z)
 
 		fun checkAir(block: Block): Boolean {
 			val up1 = block.getRelative(BlockFace.UP)
@@ -121,7 +120,7 @@ object CoolantLeak : Encounter(identifier = "coolant_leak") {
 
 			for (block in Encounters.getBlocks(
 				chest.world,
-				chest.location.toCenterLocation().toBlockPos(),
+				Vec3i(chest.location),
 				currentSize
 			) {
 				!it.isEmpty && it.isSolid && !iceTypes.contains(it.type) && it.type != Material.CHEST

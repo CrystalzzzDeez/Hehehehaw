@@ -2,8 +2,9 @@ package net.horizonsend.ion.server.listener.gear
 
 import net.horizonsend.ion.server.IonServer
 import net.horizonsend.ion.server.features.machine.AreaShields
-import net.horizonsend.ion.server.miscellaneous.registrations.legacy.CustomItems
+import net.horizonsend.ion.server.features.starship.damager.addToDamagers
 import net.horizonsend.ion.server.listener.SLEventListener
+import net.horizonsend.ion.server.miscellaneous.registrations.legacy.CustomItems
 import net.horizonsend.ion.server.miscellaneous.utils.Tasks
 import org.bukkit.Material
 import org.bukkit.Sound
@@ -64,7 +65,7 @@ object DetonatorListener : SLEventListener() {
 			detonator.setGravity(false)
 			detonator.velocity = Vector(0, 0, 0)
 
-			Tasks.syncDelay(Math.max(1.0, 20 * 1.5 - detonator.ticksLived).toLong()) {
+			Tasks.syncDelay(1.0.coerceAtLeast(20 * 1.5 - detonator.ticksLived).toLong()) {
 				detonator.remove()
 
 				val blocks = ArrayList<Block>()
@@ -94,6 +95,12 @@ object DetonatorListener : SLEventListener() {
 				) {
 					return@syncDelay
 				}
+
+				addToDamagers(
+					event.player.world,
+					block,
+					player
+				)
 
 				blocks.forEach { it.setType(Material.AIR, false) }
 

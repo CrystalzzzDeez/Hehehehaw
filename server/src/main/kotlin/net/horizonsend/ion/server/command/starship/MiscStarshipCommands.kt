@@ -25,15 +25,17 @@ import net.horizonsend.ion.server.features.misc.NewPlayerProtection.hasProtectio
 import net.horizonsend.ion.server.features.multiblock.drills.DrillMultiblock
 import net.horizonsend.ion.server.features.space.Space
 import net.horizonsend.ion.server.features.space.SpaceWorlds
+import net.horizonsend.ion.server.features.starship.AutoTurretTargeting
 import net.horizonsend.ion.server.features.starship.PilotedStarships
-import net.horizonsend.ion.server.features.starship.PilotedStarships.getDisplayName
+import net.horizonsend.ion.server.features.starship.PilotedStarships.getDisplayNameComponent
 import net.horizonsend.ion.server.features.starship.StarshipDestruction
 import net.horizonsend.ion.server.features.starship.StarshipType
-import net.horizonsend.ion.server.features.starship.active.ActivePlayerStarship
+import net.horizonsend.ion.server.features.starship.active.ActiveControlledStarship
 import net.horizonsend.ion.server.features.starship.active.ActiveStarships
-import net.horizonsend.ion.server.features.starship.control.StarshipControl
-import net.horizonsend.ion.server.features.starship.control.StarshipCruising
-import net.horizonsend.ion.server.features.starship.control.StarshipSigns
+import net.horizonsend.ion.server.features.starship.control.controllers.player.ActivePlayerController
+import net.horizonsend.ion.server.features.starship.control.movement.PlayerStarshipControl.isHoldingController
+import net.horizonsend.ion.server.features.starship.control.movement.StarshipCruising
+import net.horizonsend.ion.server.features.starship.control.signs.StarshipSigns
 import net.horizonsend.ion.server.features.starship.hyperspace.Hyperspace
 import net.horizonsend.ion.server.features.starship.hyperspace.MassShadows
 import net.horizonsend.ion.server.features.starship.subsystem.HyperdriveSubsystem
@@ -41,7 +43,12 @@ import net.horizonsend.ion.server.features.starship.subsystem.NavCompSubsystem
 import net.horizonsend.ion.server.features.starship.subsystem.weapon.interfaces.AutoWeaponSubsystem
 import net.horizonsend.ion.server.features.waypoint.WaypointManager
 import net.horizonsend.ion.server.miscellaneous.utils.*
+import net.kyori.adventure.text.Component.newline
+import net.kyori.adventure.text.Component.text
+import net.kyori.adventure.text.format.NamedTextColor
+import net.kyori.adventure.text.format.TextColor
 import net.kyori.adventure.text.minimessage.MiniMessage
+import org.bukkit.Bukkit
 import org.bukkit.Location
 import org.bukkit.World
 import org.bukkit.block.Sign
@@ -68,21 +75,30 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 				.filter { beacon -> beacon.spaceLocation.world == e.player.world.name }
 				.map { it.name.replace(" ", "_") }
 		}
+		manager.commandCompletions.registerAsyncCompletion("autoTurretTargets") { context ->
+			val all = mutableListOf<String>()
+
+			ActiveStarships.all().mapTo(all) { it.identifier }
+			all.addAll(IonServer.server.onlinePlayers.map { it.name })
+			all.remove(context.player.name)
+			all
+		}
+		manager.commandCompletions.registerAsyncCompletion("nodes") { context ->
+			ActiveStarships.findByPilot(context.player)?.weaponSets?.keys()
+		}
 	}
 
 	@Suppress("unused")
 	@CommandAlias("release")
 	fun onRelease(sender: Player) {
-		PilotedStarships.tryRelease(
-			PilotedStarships[sender] ?: return sender.userError("You are not piloting a starship"), sender
-		)
+		PilotedStarships.tryRelease(PilotedStarships[sender] ?: return sender.userError("You are not piloting a starship"))
 	}
 
 	@Suppress("unused")
 	@CommandAlias("unpilot")
 	fun onUnpilot(sender: Player) {
 		val starship = getStarshipPiloting(sender)
-		PilotedStarships.unpilot(starship, true)
+		PilotedStarships.unpilot(starship)
 		sender.information("Unpiloted ship, but left it activated")
 	}
 
@@ -91,7 +107,7 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 	fun onStopRiding(sender: Player) {
 		val starship = getStarshipRiding(sender)
 
-		failIf(starship is ActivePlayerStarship && starship.pilot == sender) {
+		failIf(starship is ActiveControlledStarship && starship.playerPilot == sender) {
 			"You can't stop riding if you're the pilot. Use /release or /unpilot."
 		}
 
@@ -114,9 +130,9 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 
 			val pilotLoc = Vec3i(0, 0, 0)
 
-			BlueprintCommand.checkObstruction(sender, schematic, pilotLoc)
+			BlueprintCommand.checkObstruction(sender.location, schematic, pilotLoc)
 
-			BlueprintCommand.loadSchematic(sender, schematic, pilotLoc)
+			BlueprintCommand.loadSchematic(sender.location, schematic, pilotLoc)
 		}
 	}
 
@@ -132,7 +148,7 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 	@CommandCompletion("x|z")
 	@Description("Jump to a set of coordinates, a hyperspace beacon, or a planet")
 	fun onJump(sender: Player, xCoordinate: String, zCoordinate: String, @Optional hyperdriveTier: Int?) {
-		val starship: ActivePlayerStarship = getStarshipPiloting(sender)
+		val starship: ActiveControlledStarship = getStarshipPiloting(sender)
 
 		val navComp: NavCompSubsystem = Hyperspace.findNavComp(starship) ?: fail { "Intact nav computer not found!" }
 		val maxRange: Int =
@@ -141,7 +157,7 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 		val x = parseNumber(xCoordinate, starship.centerOfMass.x)
 		val z = parseNumber(zCoordinate, starship.centerOfMass.z)
 
-		tryJump(starship, x, z, starship.serverLevel.world, maxRange, sender, hyperdriveTier)
+		tryJump(starship, x, z, starship.world, maxRange, sender, hyperdriveTier)
 	}
 
 	fun parseNumber(string: String, originCoord: Int): Int = when {
@@ -157,7 +173,7 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 	@CommandCompletion("auto|@planetsInWorld|@hyperspaceGatesInWorld")
 	@Description("Jump to a set of coordinates, a hyperspace beacon, or a planet")
 	fun onJump(sender: Player, destination: String, @Optional hyperdriveTier: Int?) {
-		val starship: ActivePlayerStarship = getStarshipPiloting(sender)
+		val starship: ActiveControlledStarship = getStarshipPiloting(sender)
 
 		val navComp: NavCompSubsystem = Hyperspace.findNavComp(starship) ?: fail { "Intact nav computer not found!" }
 		val maxRange: Int =
@@ -174,7 +190,7 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 			}
 			val x = playerPath.first().edgeList.first().target.loc.x.toInt()
 			val z = playerPath.first().edgeList.first().target.loc.z.toInt()
-			tryJump(starship, x, z, starship.serverLevel.world, maxRange, sender, hyperdriveTier)
+			tryJump(starship, x, z, starship.world, maxRange, sender, hyperdriveTier)
 			return
 		}
 
@@ -206,11 +222,11 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 		val x = destinationPos.x
 		val z = destinationPos.z
 
-		tryJump(starship, x, z, starship.serverLevel.world, maxRange, sender, hyperdriveTier)
+		tryJump(starship, x, z, starship.world, maxRange, sender, hyperdriveTier)
 	}
 
 	private fun tryJump(
-		starship: ActivePlayerStarship,
+		starship: ActiveControlledStarship,
 		x: Int,
 		z: Int,
 		destinationWorld: World,
@@ -227,7 +243,7 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 			"Insufficient chetherite, need ${Hyperspace.HYPERMATTER_AMOUNT} in each hopper"
 		}
 
-		val currentWorld = starship.serverLevel.world
+		val currentWorld = starship.world
 		failIf(!SpaceWorlds.contains(currentWorld)) {
 			"Not a space world!"
 		}
@@ -245,7 +261,7 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 		}
 
 		val massShadowInfo = MassShadows.find(
-			starship.serverLevel.world,
+			starship.world,
 			starship.centerOfMass.x.toDouble(),
 			starship.centerOfMass.z.toDouble()
 		)
@@ -267,21 +283,33 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 				directionString += if (escapeVector.z > 0) "west" else "east"
 			}
 
-			sender.userError(
-				"Starship is within a gravity well; jump aborted. Move away from the gravity well source:\n" +
-					"  <gray>Object: <white>${massShadowInfo.description}\n" +
-					"  <gray>Location: <white>${massShadowInfo.x}, ${massShadowInfo.z}\n" +
-					"  <gray>Gravity well radius: <white>${massShadowInfo.radius}\n" +
-					"  <gray>Current distance from center: <white>${massShadowInfo.distance}\n" +
-					"  <gray>Cruise direction to escape: " +
-					"<green>$directionString <white>(${(atan2(escapeVector.z, escapeVector.x) * 180 / PI).toInt()})"
-			)
+			val message = text()
+				.color(NamedTextColor.GRAY)
+				.append(text("Starship is within a gravity well; jump aborted. Move away from the gravity well source:", NamedTextColor.RED))
+				.append(newline())
+				.append(text("Object: "))
+				.append(massShadowInfo.description)
+				.append(newline())
+				.append(text("Location: "))
+				.append(text("${massShadowInfo.x}, ${massShadowInfo.z}", NamedTextColor.WHITE))
+				.append(newline())
+				.append(text("Gravity well radius: "))
+				.append(text(massShadowInfo.radius, NamedTextColor.WHITE))
+				.append(newline())
+				.append(text("Current distance from center: "))
+				.append(text(massShadowInfo.distance, NamedTextColor.WHITE))
+				.append(newline())
+				.append(text("Cruise direction to escape: "))
+				.append(text(directionString, NamedTextColor.GREEN))
+				.append(text(" (${(atan2(escapeVector.z, escapeVector.x) * 180 / PI).toInt()})", NamedTextColor.WHITE))
+
+			starship.sendMessage(message)
 			return
 		}
 
 		if (starship.cruiseData.velocity.lengthSquared() != 0.0) {
 			sender.userError("Starship is cruising; jump aborted. Try again when the starship fully stops moving.")
-			StarshipCruising.stopCruising(sender, starship)
+			StarshipCruising.stopCruising(starship.controller, starship)
 			return
 		}
 
@@ -316,28 +344,29 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 
 	@Suppress("unused")
 	@CommandAlias("settarget|starget|st")
-	fun onSetTarget(sender: Player, set: String, @Optional player: OnlinePlayer?) {
+	@CommandCompletion("@nodes @autoTurretTargets @nothing")
+	fun onSetTarget(sender: Player, set: String, @Optional target: String?) {
 		val starship = getStarshipRiding(sender)
 		val weaponSet = set.lowercase(Locale.getDefault())
-		failIf(!starship.weaponSets.containsKey(weaponSet)) {
-			"No such weapon set $weaponSet"
-		}
-		failIf(!starship.weaponSets[weaponSet].any { it is AutoWeaponSubsystem }) {
-			"No auto turrets on weapon set $weaponSet"
-		}
-		if (player == null) {
-			failIf(starship.autoTurretTargets.remove(weaponSet) == null) {
-				"No target set for $weaponSet"
-			}
+		failIf(!starship.weaponSets.containsKey(weaponSet)) { "No such weapon set $weaponSet" }
+		failIf(!starship.weaponSets[weaponSet].any { it is AutoWeaponSubsystem }) { "No auto turrets on weapon set $weaponSet" }
+
+		if (target == null) {
+			failIf(starship.autoTurretTargets.remove(weaponSet) == null) { "No target set for $weaponSet" }
 
 			sender.information("Unset target of <aqua>$weaponSet")
-		} else {
-			starship.autoTurretTargets[weaponSet] = player.getPlayer().uniqueId
-
-			sender.information(
-				"Set target of <aqua>$weaponSet</aqua> to <white>${player.getPlayer().name}"
-			)
+			return
 		}
+
+		val formatted = if (target.contains(":".toRegex())) target.substringAfter(":") else target
+		val targeted =
+			Bukkit.getPlayer(formatted)?.let { AutoTurretTargeting.target(it) } ?:
+			ActiveStarships[formatted]?.let { AutoTurretTargeting.target(it) } ?:
+			fail { "Target $target could not be found!" }
+
+		starship.autoTurretTargets[weaponSet] = targeted
+
+		sender.information("Set target of <aqua>$weaponSet</aqua> to <white>${targeted.identifier}")
 	}
 
 	@Suppress("unused")
@@ -369,12 +398,13 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 			sender.userErrorActionMessage("Error no weaponsets with autoturret targets found")
 			return
 		}
-		starship.autoTurretTargets.forEach { starship.autoTurretTargets.remove(it.key, it.value) }
+		starship.autoTurretTargets.clear()
 		sender.successActionMessage("Unset target for all weaponsets.")
 	}
 
 	@CommandAlias("weaponset|ws")
 	@Suppress("unused")
+	@CommandCompletion("@nodes")
 	fun onWeaponset(sender: Player, set: String) {
 		val starship = getStarshipPiloting(sender)
 
@@ -418,7 +448,7 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 	@CommandAlias("nukeship")
 	@CommandPermission("starships.nukeship")
 	fun onNukeShip(sender: Player) {
-		val ship = getStarshipRiding(sender) as? ActivePlayerStarship ?: return
+		val ship = getStarshipRiding(sender) as? ActiveControlledStarship ?: return
 		StarshipDestruction.vanish(ship)
 	}
 
@@ -426,7 +456,7 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 	@CommandAlias("directcontrol|dc")
 	fun onDirectControl(sender: Player) {
 		val starship = getStarshipPiloting(sender)
-		failIf(!starship.isDirectControlEnabled && !StarshipControl.isHoldingController(sender)) {
+		failIf(!starship.isDirectControlEnabled && !isHoldingController(sender)) {
 			"You need to hold a starship controller to enable direct control"
 		}
 		if (starship.initialBlockCount > StarshipType.DESTROYER.maxSize) {
@@ -443,10 +473,14 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 	@CommandAlias("cruise")
 	fun onCruise(sender: Player) {
 		val ship = getStarshipPiloting(sender)
+		val controller = ActivePlayerController[sender] ?: return
+
 		if (!StarshipCruising.isCruising(ship)) {
-			StarshipCruising.startCruising(sender, ship)
+			val dir = sender.location.direction.setY(0).normalize()
+
+			StarshipCruising.startCruising(controller, ship, dir)
 		} else {
-			StarshipCruising.stopCruising(sender, ship)
+			StarshipCruising.stopCruising(controller, ship)
 		}
 	}
 
@@ -497,16 +531,16 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 		var totalBlocks = 0
 
 		for (starship in ActiveStarships.all()) {
-			val pilot: Player? = (starship as? ActivePlayerStarship)?.pilot
+			val pilot: Player? = starship.playerPilot
 			totalShips++
 
 			val size: Int = starship.initialBlockCount
 			totalBlocks += size
 
-			val name = (starship as? ActivePlayerStarship)?.data?.let { getDisplayName(it) } ?: starship.type.formatted
+			val name = (starship as? ActiveControlledStarship)?.data?.let { getDisplayNameComponent(it) } ?: starship.type.component
 			val hoverName = MiniMessage.miniMessage().deserialize(starship.type.formatted).asHoverEvent()
 
-			val pilotName = pilot?.name ?: "none"
+			val pilotName = starship.controller.pilotName
 
 			val pilotNationID = pilot?.let { PlayerCache[pilot].nationOid }
 
@@ -519,26 +553,33 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 				}
 			}
 
-			val pilotRelationColor = pilotNationRelation?.actual?.textStyle
+			val pilotRelationColor = (pilotNationRelation?.actual ?: NationRelation.Level.NONE).color
 
-			val formattedName =
-				pilotRelationColor?.let {
-					"<$pilotRelationColor>$pilotName</$pilotRelationColor>${if (pilot?.hasProtection() == true) " <gold>★</gold>" else ""}"
-				} ?: (pilotName + if (pilot?.hasProtection() == true) " <gold>★</gold>" else "")
-
-			var worldName = starship.serverLevel.world.key.toString().substringAfterLast(":")
+			var worldName = starship.world.key.toString().substringAfterLast(":")
 				.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
 
 			if (worldName == "Overworld") {
-				worldName = starship.serverLevel.world.name
+				worldName = starship.world.name
 					.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
 			}
 
-			val message = MiniMessage.miniMessage().deserialize(
-				"$name<reset> piloted by $formattedName of size $size in $worldName"
-			).hoverEvent(hoverName)
+			val line = text()
+				.hoverEvent(hoverName)
+				.color(TextColor.fromHexString("#b8e0d4"))
+				.append(name)
+				.append(text(" piloted by "))
+				.append(pilotName.color(pilotRelationColor))
 
-			sender.sendMessage(message)
+			if (pilot?.hasProtection() == true) line
+				.append(text(" ★", NamedTextColor.GOLD))
+
+			line
+				.append(text(" of size "))
+				.append(text(size, NamedTextColor.WHITE))
+				.append(text(" in "))
+				.append(text(worldName, NamedTextColor.WHITE))
+
+			sender.sendMessage(line)
 		}
 
 		sender.sendRichMessage("<gray>Total Ships<dark_gray>:<aqua> $totalShips")
@@ -548,7 +589,7 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 	@Suppress("unused")
 	@CommandAlias("usebeacon")
 	fun onUseBeacon(sender: Player) {
-		val ship = getStarshipRiding(sender) as? ActivePlayerStarship ?: return
+		val ship = getStarshipRiding(sender) as? ActiveControlledStarship ?: return
 
 		if (ship.beacon != null) {
 			val other = ship.beacon!!.exits?.randomOrNull() ?: ship.beacon!!.destination
@@ -577,7 +618,7 @@ object MiscStarshipCommands : net.horizonsend.ion.server.command.SLCommand() {
 		val signs = starship.drills.mapNotNull {
 			val (x, y, z) = it.pos
 
-			starship.serverLevel.world.getBlockAt(x, y, z).state as? Sign
+			starship.world.getBlockAt(x, y, z).state as? Sign
 		}
 
 		val user = if (enabled) sender.name else null

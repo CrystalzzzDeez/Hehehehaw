@@ -1,6 +1,6 @@
 package net.horizonsend.ion.server.features.starship.subsystem.reactor
 
-import net.horizonsend.ion.server.features.starship.active.ActivePlayerStarship
+import net.horizonsend.ion.server.features.starship.active.ActiveControlledStarship
 import net.horizonsend.ion.server.features.starship.active.ActiveStarship
 import net.horizonsend.ion.server.features.starship.subsystem.StarshipSubsystem
 import net.horizonsend.ion.server.features.starship.subsystem.shield.StarshipShields
@@ -9,7 +9,7 @@ import kotlin.math.roundToInt
 
 class ReactorSubsystem(
 	starship: ActiveStarship
-) : StarshipSubsystem(starship, starship.centerOfMassVec3i) {
+) : StarshipSubsystem(starship, starship.centerOfMass) {
 	val output: Double =
 		Math.cbrt(starship.initialBlockCount.coerceAtLeast(500).toDouble()) * 3000.0 * (starship.type.poweroverrider)
 	val powerDistributor = PowerDistributor()
@@ -47,7 +47,7 @@ class ReactorSubsystem(
 			shield.power += min(missing, fraction)
 		}
 
-		if (starship is ActivePlayerStarship) {
+		if (starship is ActiveControlledStarship) {
 			StarshipShields.updateShieldBars(starship)
 		}
 	}

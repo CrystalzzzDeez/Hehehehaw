@@ -1,7 +1,7 @@
 package net.horizonsend.ion.server.features.starship.subsystem.weapon
 
-import net.horizonsend.ion.server.features.starship.controllers.Controller
 import net.horizonsend.ion.server.features.multiblock.starshipweapon.turret.TurretMultiblock
+import net.horizonsend.ion.server.features.starship.damager.Damager
 import net.horizonsend.ion.server.features.starship.active.ActiveStarship
 import net.horizonsend.ion.server.features.starship.subsystem.DirectionalSubsystem
 import net.horizonsend.ion.server.features.starship.subsystem.weapon.interfaces.ManualWeaponSubsystem
@@ -17,7 +17,7 @@ abstract class TurretWeaponSubsystem(
     pos: Vec3i,
     override var face: BlockFace
 ) : WeaponSubsystem(ship, pos), DirectionalSubsystem, ManualWeaponSubsystem {
-	private fun getSign() = starship.serverLevel.world.getBlockAtKey(pos.toBlockKey()).getState(false) as? Sign
+	private fun getSign() = starship.world.getBlockAtKey(pos.toBlockKey()).getState(false) as? Sign
 
 	protected abstract val multiblock: TurretMultiblock
 	protected abstract val inaccuracyRadians: Double
@@ -63,10 +63,10 @@ abstract class TurretWeaponSubsystem(
 	}
 
 	override fun manualFire(
-		shooter: Controller,
-		dir: Vector,
-		target: Vector
+        shooter: Damager,
+        dir: Vector,
+        target: Vector
 	) {
-		multiblock.shoot(starship.serverLevel.world, pos, face, dir, starship, shooter, false)
+		multiblock.shoot(starship.world, pos, face, dir, starship, shooter, false)
 	}
 }

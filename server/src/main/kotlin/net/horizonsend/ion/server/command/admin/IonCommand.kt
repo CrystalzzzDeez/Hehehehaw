@@ -8,6 +8,7 @@ import net.horizonsend.ion.common.extensions.serverError
 import net.horizonsend.ion.common.extensions.success
 import net.horizonsend.ion.common.extensions.userError
 import net.horizonsend.ion.server.command.SLCommand
+import net.kyori.adventure.audience.Audience
 import org.bukkit.Bukkit
 import org.bukkit.command.CommandSender
 import org.bukkit.entity.Player
@@ -16,7 +17,7 @@ import java.util.*
 @CommandAlias("ion")
 @CommandPermission("ion.utilities")
 object IonCommand : SLCommand() {
-	val debugEnabledPlayers = mutableListOf<UUID>()
+	val debugEnabledPlayers = mutableListOf<Audience>()
 
 	@Suppress("Unused")
 	@Subcommand("view set")
@@ -35,7 +36,7 @@ object IonCommand : SLCommand() {
 			world.viewDistance = renderDistance
 		}
 
-		sender.sendMessage("View distance set to $renderDistance.")
+		sender.success("View distance set to $renderDistance.")
 	}
 
 	@Suppress("Unused")
@@ -55,40 +56,47 @@ object IonCommand : SLCommand() {
 			world.viewDistance = simulationDistance
 		}
 
-		sender.sendMessage("Simulation distance set to $simulationDistance.")
+		sender.success("Simulation distance set to $simulationDistance.")
 	}
 
 	@Suppress("Unused")
 	@Subcommand("view get")
 	fun getServerViewDistance(sender: CommandSender) {
-		sender.sendMessage("View distance is currently set to ${Bukkit.getWorlds()[0].viewDistance}.")
+		sender.information("View distance is currently set to ${Bukkit.getWorlds()[0].viewDistance}.")
 	}
 
 	@Suppress("Unused")
 	@Subcommand("simulation get")
 	fun getServerSimulationDistance(sender: CommandSender) {
-		sender.sendMessage("Simulation distance is currently set to ${Bukkit.getWorlds()[0].simulationDistance}.")
+		sender.information("Simulation distance is currently set to ${Bukkit.getWorlds()[0].simulationDistance}.")
 	}
 
 	@Suppress("Unused")
 	@Subcommand("debug")
 	fun debugToggle(sender: Player) {
-		if (debugEnabledPlayers.contains(sender.uniqueId)) {
-			debugEnabledPlayers.remove(sender.uniqueId)
+		if (debugEnabledPlayers.contains(sender)) {
+			debugEnabledPlayers.remove(sender)
 			sender.success("Disabled debug mode")
 		} else {
-			debugEnabledPlayers.add(sender.uniqueId)
+			debugEnabledPlayers.add(sender)
 			sender.success("Enabled debug mode")
 		}
 	}
 }
 
-fun Player.debugBanner(message: String) = debug("------------------- $message -------------------")
-fun Player.debug(message: String) =
-	if (IonCommand.debugEnabledPlayers.contains(uniqueId)) {
+fun Audience.debugBanner(message: String) = debug("------------------- $message -------------------")
+fun Audience.debug(message: String) {
+	if (this !is Player) return
+
+	if (IonCommand.debugEnabledPlayers.contains(this)) {
 		information(message)
-	} else null
-fun Player.debugRed(message: String) =
-	if (IonCommand.debugEnabledPlayers.contains(uniqueId)) {
+	}
+}
+
+fun Audience.debugRed(message: String) {
+	if (this !is Player) return
+
+	if (IonCommand.debugEnabledPlayers.contains(this)) {
 		serverError(message)
-	} else null
+	}
+}

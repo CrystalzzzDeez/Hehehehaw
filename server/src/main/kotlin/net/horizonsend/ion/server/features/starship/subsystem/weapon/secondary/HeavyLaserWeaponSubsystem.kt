@@ -1,8 +1,8 @@
 package net.horizonsend.ion.server.features.starship.subsystem.weapon.secondary
 
 import net.horizonsend.ion.server.IonServer
-import net.horizonsend.ion.server.features.starship.controllers.Controller
 import net.horizonsend.ion.server.features.starship.active.ActiveStarship
+import net.horizonsend.ion.server.features.starship.damager.Damager
 import net.horizonsend.ion.server.features.starship.subsystem.weapon.TargetTrackingCannonWeaponSubsystem
 import net.horizonsend.ion.server.features.starship.subsystem.weapon.interfaces.AmmoConsumingWeaponSubsystem
 import net.horizonsend.ion.server.features.starship.subsystem.weapon.interfaces.HeavyWeaponSubsystem
@@ -31,7 +31,7 @@ class HeavyLaserWeaponSubsystem(
 	override val extraDistance: Int = IonServer.balancing.starshipWeapons.heavyLaser.extraDistance
 	override val aimDistance: Int = IonServer.balancing.starshipWeapons.heavyLaser.aimDistance
 
-	override fun fire(loc: Location, dir: Vector, shooter: Controller, target: Vector?) {
+	override fun fire(loc: Location, dir: Vector, shooter: Damager, target: Vector?) {
 		checkNotNull(target)
 		HeavyLaserProjectile(starship, loc, dir, shooter, target, aimDistance, sound).fire()
 	}

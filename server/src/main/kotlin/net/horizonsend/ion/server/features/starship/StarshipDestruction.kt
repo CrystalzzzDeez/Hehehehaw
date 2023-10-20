@@ -6,7 +6,7 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet
 import net.horizonsend.ion.common.utils.miscellaneous.d
 import net.horizonsend.ion.server.IonServer
 import net.horizonsend.ion.server.features.space.SpaceWorlds
-import net.horizonsend.ion.server.features.starship.active.ActivePlayerStarship
+import net.horizonsend.ion.server.features.starship.active.ActiveControlledStarship
 import net.horizonsend.ion.server.features.starship.active.ActiveStarship
 import net.horizonsend.ion.server.features.starship.active.ActiveStarshipMechanics
 import net.horizonsend.ion.server.features.starship.event.StarshipExplodeEvent
@@ -38,7 +38,7 @@ object StarshipDestruction {
 
 		starship.isExploding = true
 
-		if (starship is ActivePlayerStarship) {
+		if (starship is ActiveControlledStarship) {
 			DeactivatedPlayerStarships.deactivateAsync(starship) {
 				DeactivatedPlayerStarships.destroyAsync(starship.data) {
 					vanishShip(starship)
@@ -53,7 +53,7 @@ object StarshipDestruction {
 		val air = Material.AIR.createBlockData().nms
 		val queue = Long2ObjectOpenHashMap<BlockState>(starship.initialBlockCount)
 		starship.blocks.associateWithTo(queue) { air }
-		BlockPlacement.placeImmediate(starship.serverLevel.world, queue)
+		BlockPlacement.placeImmediate(starship.world, queue)
 	}
 
 	fun destroy(starship: ActiveStarship) {
@@ -66,7 +66,7 @@ object StarshipDestruction {
 
 		starship.isExploding = true
 
-		if (starship is ActivePlayerStarship) {
+		if (starship is ActiveControlledStarship) {
 			DeactivatedPlayerStarships.deactivateAsync(starship) {
 				DeactivatedPlayerStarships.destroyAsync(starship.data) {
 					destroyShip(starship)
@@ -78,7 +78,7 @@ object StarshipDestruction {
 	}
 
 	private fun destroyShip(starship: ActiveStarship) {
-		val world = starship.serverLevel.world
+		val world = starship.world
 		val blocks = starship.blocks
 		if (SpaceWorlds.contains(world)) {
 			zeroGSink(world, blocks)

@@ -1,9 +1,9 @@
 package net.horizonsend.ion.server.features.starship.subsystem.weapon.projectile
 
 import net.horizonsend.ion.common.utils.miscellaneous.squared
+import net.horizonsend.ion.server.features.starship.damager.Damager
 import net.horizonsend.ion.server.features.starship.active.ActiveStarship
 import net.horizonsend.ion.server.features.starship.active.ActiveStarships
-import net.horizonsend.ion.server.features.starship.controllers.Controller
 import org.bukkit.Location
 import org.bukkit.util.Vector
 import kotlin.math.acos
@@ -11,12 +11,12 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 abstract class TrackingLaserProjectile(
-	starship: ActiveStarship?,
-	loc: Location,
-	dir: Vector,
-	shooter: Controller?,
-	private val originalTarget: Vector,
-	private val aimDistance: Int
+    starship: ActiveStarship?,
+    loc: Location,
+    dir: Vector,
+    shooter: Damager,
+    private val originalTarget: Vector,
+    private val aimDistance: Int
 ) : LaserProjectile(starship, loc, dir, shooter) {
 	private lateinit var getTargetOrigin: () -> Vector
 	private lateinit var targetBase: Vector
@@ -34,7 +34,7 @@ abstract class TrackingLaserProjectile(
 	private fun processTarget() {
 		val targetShip = ActiveStarships.findByBlock(originalTarget.toLocation(loc.world))
 		getTargetOrigin = {
-			targetShip?.centerOfMassVec3i?.toCenterVector() ?: originalTarget
+			targetShip?.centerOfMass?.toCenterVector() ?: originalTarget
 		}
 		targetBase = originalTarget.clone().subtract(getTargetOrigin())
 	}

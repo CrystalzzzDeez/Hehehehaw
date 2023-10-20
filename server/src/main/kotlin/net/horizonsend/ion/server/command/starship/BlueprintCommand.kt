@@ -17,6 +17,7 @@ import net.horizonsend.ion.common.database.schema.starships.Blueprint
 import net.horizonsend.ion.common.database.slPlayerId
 import net.horizonsend.ion.common.extensions.success
 import net.horizonsend.ion.common.extensions.userError
+import net.horizonsend.ion.common.utils.text.isAlphanumeric
 import net.horizonsend.ion.server.features.nations.gui.playerClicker
 import net.horizonsend.ion.server.features.progression.Levels
 import net.horizonsend.ion.server.features.starship.DeactivatedPlayerStarships
@@ -25,7 +26,7 @@ import net.horizonsend.ion.server.features.starship.StarshipComputers
 import net.horizonsend.ion.server.features.starship.StarshipDetection
 import net.horizonsend.ion.server.features.starship.StarshipSchematic
 import net.horizonsend.ion.server.features.starship.StarshipType
-import net.horizonsend.ion.server.features.starship.active.ActivePlayerStarship
+import net.horizonsend.ion.server.features.starship.active.ActiveControlledStarship
 import net.horizonsend.ion.server.features.starship.factory.PrintItem
 import net.horizonsend.ion.server.features.starship.factory.StarshipFactories
 import net.horizonsend.ion.server.miscellaneous.*
@@ -33,6 +34,7 @@ import net.horizonsend.ion.server.miscellaneous.registrations.ShipFactoryMateria
 import net.horizonsend.ion.server.miscellaneous.utils.*
 import net.kyori.adventure.text.minimessage.MiniMessage
 import net.minecraft.world.level.block.BaseEntityBlock
+import org.bukkit.Location
 import org.bukkit.Material
 import org.bukkit.entity.Player
 import org.litote.kmongo.and
@@ -89,13 +91,16 @@ object BlueprintCommand : net.horizonsend.ion.server.command.SLCommand() {
 			failIf(Blueprint.count(Blueprint::owner eq slPlayerId) > getMaxBlueprints(sender)) {
 				"You can only have up to ${getMaxBlueprints(sender)} blueprints."
 			}
-			Blueprint.create(slPlayerId, name, starship.data.starshipType.actualType, pilotLoc, starship.initialBlockCount, data)
+
+			Blueprint.create(slPlayerId, name, starship.data.starshipType, pilotLoc, starship.initialBlockCount, data)
 			sender.success("Saved blueprint $name")
 		} else {
 			val blueprint = getBlueprint(sender, name)
+
 			blueprint.blockData = data
 			blueprint.pilotLoc = pilotLoc
 			blueprint.type = starship.data.starshipType
+
 			saveBlueprint(blueprint)
 			sender.success("Updated blueprint $name")
 		}
@@ -196,9 +201,9 @@ object BlueprintCommand : net.horizonsend.ion.server.command.SLCommand() {
 		val pilotLoc = blueprint.pilotLoc
 
 		Tasks.syncBlocking {
-			checkObstruction(sender, schematic, Vec3i(pilotLoc))
+			checkObstruction(sender.location, schematic, Vec3i(pilotLoc))
 
-			loadSchematic(sender, schematic, Vec3i(pilotLoc)) { origin ->
+			loadSchematic(sender.location, schematic, Vec3i(pilotLoc)) { origin ->
 				tryPilot(sender, origin, blueprint.type.actualType, blueprint.name)
 			}
 		}
@@ -214,13 +219,13 @@ object BlueprintCommand : net.horizonsend.ion.server.command.SLCommand() {
 		val pilotLoc = blueprint.pilotLoc
 
 		Tasks.syncBlocking {
-			checkObstruction(sender, schematic, Vec3i(pilotLoc))
+			checkObstruction(sender.location, schematic, Vec3i(pilotLoc))
 
-			loadSchematic(sender, schematic, Vec3i(pilotLoc)) { origin ->
+			loadSchematic(sender.location, schematic, Vec3i(pilotLoc)) { origin ->
 				tryPilot(sender, origin, blueprint.type.actualType, blueprint.name) { starship ->
 
 					starship.iterateBlocks { x, y, z ->
-						val block = starship.serverLevel.world.getBlockAt(x, y, z)
+						val block = starship.world.getBlockAt(x, y, z)
 						val blockData = block.blockData
 						if (blockData.nms.block is BaseEntityBlock) {
 							return@iterateBlocks
@@ -234,9 +239,9 @@ object BlueprintCommand : net.horizonsend.ion.server.command.SLCommand() {
 		}
 	}
 
-	fun checkObstruction(sender: Player, schematic: Clipboard, pilotLoc: Vec3i) {
-		val world = BukkitAdapter.adapt(sender.world)
-		val vec: BlockVector3 = getPasteVector(sender, pilotLoc)
+	fun checkObstruction(location: Location, schematic: Clipboard, pilotLoc: Vec3i) {
+		val world = BukkitAdapter.adapt(location.world)
+		val vec: BlockVector3 = getPasteVector(location, pilotLoc)
 		val region = schematic.region.clone()
 		val offset = vec.subtract(schematic.origin)
 		for (point in region) {
@@ -246,20 +251,17 @@ object BlueprintCommand : net.horizonsend.ion.server.command.SLCommand() {
 		}
 	}
 
-	fun loadSchematic(sender: Player, schematic: Clipboard, pilotLoc: Vec3i, callback: (Vec3i) -> Unit = {}) {
-		val vec: BlockVector3 = getPasteVector(sender, pilotLoc)
+	fun loadSchematic(location: Location, schematic: Clipboard, pilotLoc: Vec3i, callback: (Vec3i) -> Unit = {}) {
+		val vec: BlockVector3 = getPasteVector(location, pilotLoc)
 		val vec3i = Vec3i(vec.blockX, vec.blockY, vec.blockZ)
 
-		placeSchematicEfficiently(schematic, sender.world, vec3i, true) {
+		placeSchematicEfficiently(schematic, location.world, vec3i, true) {
 			callback(vec3i)
 		}
 	}
 
-	private fun getPasteVector(sender: Player, pilotLoc: Vec3i): BlockVector3 {
-		val playerLocation = sender.location
-
-		return BukkitAdapter.asVector(playerLocation).toBlockPoint()
-			.subtract(BlockVector3.at(pilotLoc.x, pilotLoc.y, pilotLoc.z))
+	private fun getPasteVector(origin: Location, pilotLoc: Vec3i): BlockVector3 {
+		return BukkitAdapter.asVector(origin).toBlockPoint().subtract(BlockVector3.at(pilotLoc.x, pilotLoc.y, pilotLoc.z))
 	}
 
 	fun tryPilot(
@@ -267,7 +269,7 @@ object BlueprintCommand : net.horizonsend.ion.server.command.SLCommand() {
 		origin: Vec3i,
 		type: StarshipType,
 		name: String,
-		callback: (ActivePlayerStarship) -> Unit = {}
+		callback: (ActiveControlledStarship) -> Unit = {}
 	) {
 		val block = sender.world.getBlockAtKey(origin.toBlockKey())
 
@@ -276,7 +278,7 @@ object BlueprintCommand : net.horizonsend.ion.server.command.SLCommand() {
 			return
 		}
 
-		DeactivatedPlayerStarships.createAsync(block.world, block.x, block.y, block.z, sender.uniqueId, name) { data ->
+		DeactivatedPlayerStarships.createPlayerShipAsync(block.world, block.x, block.y, block.z, sender.uniqueId, name) { data ->
 			Tasks.async {
 				try {
 					DeactivatedPlayerStarships.updateType(data, type)

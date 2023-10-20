@@ -1,18 +1,28 @@
 package net.horizonsend.ion.server.features.starship.active
 
-import com.destroystokyo.paper.Title
 import com.google.common.collect.HashBiMap
 import com.google.common.collect.HashMultimap
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet
+import net.horizonsend.ion.common.extensions.hint
 import net.horizonsend.ion.common.extensions.informationAction
 import net.horizonsend.ion.common.extensions.success
 import net.horizonsend.ion.common.utils.miscellaneous.d
 import net.horizonsend.ion.common.utils.miscellaneous.squared
+import net.horizonsend.ion.common.utils.text.randomString
+import net.horizonsend.ion.server.command.admin.debug
 import net.horizonsend.ion.server.features.multiblock.gravitywell.GravityWellMultiblock
 import net.horizonsend.ion.server.features.progression.ShipKillXP
 import net.horizonsend.ion.server.features.space.CachedPlanet
-import net.horizonsend.ion.server.features.starship.Starship
+import net.horizonsend.ion.server.features.starship.AutoTurretTargeting
+import net.horizonsend.ion.server.features.starship.PilotedStarships
 import net.horizonsend.ion.server.features.starship.StarshipType
+import net.horizonsend.ion.server.features.starship.control.controllers.Controller
+import net.horizonsend.ion.server.features.starship.control.controllers.NoOpController
+import net.horizonsend.ion.server.features.starship.control.controllers.ai.AIController
+import net.horizonsend.ion.server.features.starship.control.controllers.player.ActivePlayerController
+import net.horizonsend.ion.server.features.starship.control.controllers.player.PlayerController
+import net.horizonsend.ion.server.features.starship.control.controllers.player.UnpilotedController
+import net.horizonsend.ion.server.features.starship.damager.Damager
 import net.horizonsend.ion.server.features.starship.movement.StarshipMovement
 import net.horizonsend.ion.server.features.starship.subsystem.GravityWellSubsystem
 import net.horizonsend.ion.server.features.starship.subsystem.HyperdriveSubsystem
@@ -26,6 +36,7 @@ import net.horizonsend.ion.server.features.starship.subsystem.thruster.ThrustDat
 import net.horizonsend.ion.server.features.starship.subsystem.thruster.ThrusterSubsystem
 import net.horizonsend.ion.server.features.starship.subsystem.weapon.TurretWeaponSubsystem
 import net.horizonsend.ion.server.features.starship.subsystem.weapon.WeaponSubsystem
+import net.horizonsend.ion.server.miscellaneous.IonWorld
 import net.horizonsend.ion.server.miscellaneous.utils.CARDINAL_BLOCK_FACES
 import net.horizonsend.ion.server.miscellaneous.utils.Tasks
 import net.horizonsend.ion.server.miscellaneous.utils.Vec3i
@@ -33,17 +44,16 @@ import net.horizonsend.ion.server.miscellaneous.utils.blockKey
 import net.horizonsend.ion.server.miscellaneous.utils.blockKeyX
 import net.horizonsend.ion.server.miscellaneous.utils.blockKeyY
 import net.horizonsend.ion.server.miscellaneous.utils.blockKeyZ
+import net.horizonsend.ion.server.miscellaneous.utils.debugAudience
 import net.horizonsend.ion.server.miscellaneous.utils.getBlockTypeSafe
 import net.horizonsend.ion.server.miscellaneous.utils.minecraft
-import net.horizonsend.ion.server.miscellaneous.utils.msg
-import net.horizonsend.ion.server.miscellaneous.utils.title
 import net.kyori.adventure.audience.Audience
 import net.kyori.adventure.audience.ForwardingAudience
-import net.minecraft.core.BlockPos
-import net.minecraft.server.level.ServerLevel
+import net.kyori.adventure.text.Component
+import net.starlegacy.feature.starship.active.ActiveStarshipHitbox
 import org.bukkit.Bukkit
-import org.bukkit.Color
 import org.bukkit.Location
+import org.bukkit.World
 import org.bukkit.block.BlockFace
 import org.bukkit.block.Sign
 import org.bukkit.entity.Entity
@@ -53,7 +63,6 @@ import org.bukkit.util.Vector
 import java.util.LinkedList
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.atomic.AtomicInteger
 import kotlin.collections.set
 import kotlin.math.ln
 import kotlin.math.max
@@ -62,41 +71,61 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-abstract class ActiveStarship(
-	serverLevel: ServerLevel,
-
+abstract class ActiveStarship (
+	world: World,
 	var blocks: LongOpenHashSet,
 	val mass: Double,
-	centerOfMass: BlockPos,
+	var centerOfMass: Vec3i,
 	private val hitbox: ActiveStarshipHitbox
-) : Starship(serverLevel, centerOfMass), ForwardingAudience {
+) : ForwardingAudience {
+
 	override fun audiences(): Iterable<Audience> = onlinePassengers
 
 	abstract val type: StarshipType
 
-	private var _centerOfMassVec3i: Vec3i = Vec3i(centerOfMass.x, centerOfMass.y, centerOfMass.z)
-
-	override var serverLevel: ServerLevel
-		get() = super.serverLevel
+	var world: World = world
 		set(value) {
-			ActiveStarships.updateWorld(this, value.world, value.world)
-			super.serverLevel = value
+			ActiveStarships.updateWorld(this, value, value)
+			field = value
 		}
 
-	override var centerOfMass: BlockPos
-		get() = super.centerOfMass
+	@Suppress("leakingThis") // Only for initialization, will be replaced
+	var controller: Controller = NoOpController(this)
 		set(value) {
-			super.centerOfMass = value
-			_centerOfMassVec3i = Vec3i(value.x, value.y, value.z)
+			if (this is ActiveControlledStarship) PilotedStarships.changeController(this, value)
+			value.hint("Updated control mode to ${value.name}.")
+			field.destroy()
+			field = value
 		}
 
-	@Deprecated("Prefer Minecraft - `net.minecraft.core.BlockPos`")
-	var centerOfMassVec3i: Vec3i
-		get() = _centerOfMassVec3i
-		set(value) {
-			super.centerOfMass = BlockPos(value.x, value.y, value.z)
-			_centerOfMassVec3i = value
-		}
+	/**
+	 * If the controller is an active player controller, get the player.
+	 * It just makes a lot of things less verbose.
+	 *
+	 * Try not to use, most starship code should not rely on players.
+	 **/
+	val playerPilot: Player? get() = (controller as? ActivePlayerController)?.player
+
+	/** Called on each server tick. */
+	fun tick() {
+		controller.tick()
+	}
+
+	/** Called when a starship is removed. Any cleanup logic should be done here. */
+	fun destroy() {
+		IonWorld[world.minecraft].starships.remove(this)
+		controller.destroy()
+	}
+
+	init {
+		@Suppress("LeakingThis") // This is done right at the end of the class's initialization, it *should* be fine
+		IonWorld[world.minecraft].starships.add(this)
+	}
+
+	// Created once
+	val charIdentifier = randomString(5L)
+	// used to identify the ship to auto turrets
+	val identifier get() = getAutoTurretIdentifier()
 
 	var isTeleporting: Boolean = false
 
@@ -118,7 +147,12 @@ abstract class ActiveStarship(
 
 	val weaponSets: HashMultimap<String, WeaponSubsystem> = HashMultimap.create()
 	val weaponSetSelections: HashBiMap<UUID, String> = HashBiMap.create()
-	val autoTurretTargets = mutableMapOf<String, UUID>()
+
+	val autoTurretTargets = mutableMapOf<String, AutoTurretTargeting.AutoTurretTarget<*>>()
+
+	// Non-normalized vector containing the ships velocity
+	// Used for target lead / speed estimations
+	var velocity: Vector = Vector(0.0, 0.0, 0.0)
 
 	val shieldEfficiency: Double
 		get() = (shields.size.d().pow(0.9) / (initialBlockCount / 500.0).coerceAtLeast(1.0).pow(0.7))
@@ -131,14 +165,14 @@ abstract class ActiveStarship(
 
 	var lastTick = System.nanoTime()
 
-	var isInterdicting = false
-		private set
-
+	/** Ignore weapon color, use rainbows for pride month **/
 	var rainbowToggle = false
 
-	var randomTarget = false
+	var forward: BlockFace = BlockFace.NORTH
+	var isExploding = false
 
-	var randomTargetBlacklist: MutableSet<UUID> = mutableSetOf()
+	var isInterdicting = false; private set
+	abstract val interdictionRange: Int
 
 	fun setIsInterdicting(value: Boolean) {
 		Tasks.checkMainThread()
@@ -146,7 +180,7 @@ abstract class ActiveStarship(
 
 		gravityWells
 			.filter { it.isIntact() }
-			.map { it.pos.toLocation(serverLevel.world).block.state }
+			.map { it.pos.toLocation(world).block.state }
 			.filterIsInstance<Sign>()
 			.forEach { GravityWellMultiblock.setEnabled(it, value) }
 
@@ -158,15 +192,6 @@ abstract class ActiveStarship(
 
 		onlinePassengers.forEach { player -> player.success("Gravity well enabled") }
 	}
-
-	abstract val interdictionRange: Int
-
-	abstract val weaponColor: Color
-
-	var forward: BlockFace = BlockFace.NORTH
-	var isExploding = false
-
-	val damagers = mutableMapOf<ShipKillXP.Damager, AtomicInteger>()
 
 	val min: Vec3i get() = hitbox.min
 	val max: Vec3i get() = hitbox.max
@@ -229,7 +254,7 @@ abstract class ActiveStarship(
 	}
 
 	fun isWithinHitbox(loc: Location, tolerance: Int = 2): Boolean {
-		return serverLevel == loc.world.minecraft && isWithinHitbox(loc.blockX, loc.blockY, loc.blockZ, tolerance)
+		return world == loc.world && isWithinHitbox(loc.blockX, loc.blockY, loc.blockZ, tolerance)
 	}
 
 	fun isWithinHitbox(entity: Entity, tolerance: Int = 2): Boolean {
@@ -292,16 +317,6 @@ abstract class ActiveStarship(
 
 	abstract fun moveAsync(movement: StarshipMovement): CompletableFuture<Boolean>
 
-	@Deprecated("Deprecated in favour of Adventure text components.")
-	fun sendTitle(title: Title) {
-		onlinePassengers.asSequence().forEach { it title title }
-	}
-
-	@Deprecated("Deprecated in favour of Adventure text components.")
-	fun sendMessage(message: String) {
-		onlinePassengers.asSequence().forEach { it msg message }
-	}
-
 	/** get the thruster data for this direction. if it's diagonal, it returns the faster side's speed. */
 	fun getThrustData(dx: Int, dz: Int): ThrustData {
 		val xDirection = if (dx > 0) BlockFace.EAST else BlockFace.WEST
@@ -336,7 +351,7 @@ abstract class ActiveStarship(
 
 	fun hullIntegrity(): Double {
 		val nonAirBlocks = blocks.count {
-			getBlockTypeSafe(serverLevel, blockKeyX(it), blockKeyY(it), blockKeyZ(it))?.isAir != true
+			getBlockTypeSafe(world, blockKeyX(it), blockKeyY(it), blockKeyZ(it))?.isAir != true
 		}
 		return nonAirBlocks.toDouble() / initialBlockCount.toDouble()
 	}
@@ -344,4 +359,35 @@ abstract class ActiveStarship(
 	fun getEntryRange(planet: CachedPlanet): Int {
 		return planet.atmosphereRadius + max(max.x - min.x, max.z - min.z) / 2 + 10
 	}
+
+	private fun getAutoTurretIdentifier(): String = when (controller) {
+		is UnpilotedController -> "UnpilotedShip:$charIdentifier"
+
+		is PlayerController -> (controller as PlayerController).player.name
+
+		is AIController -> "${getDisplayNamePlain()}:$charIdentifier"
+
+		is NoOpController -> "${getDisplayNamePlain()}:$charIdentifier"
+
+		else -> throw NotImplementedError("${controller::class.java.simpleName} does not have an auto turret identifier!")
+	}
+
+	val damagers = mutableMapOf<Damager, ShipKillXP.ShipDamageData>()
+	fun lastDamagedOrNull(): Long? = damagers.maxOfOrNull { it.value.lastDamaged }
+
+	fun addToDamagers(damager: Damager) {
+		damagers.getOrPut(damager) { ShipKillXP.ShipDamageData() }.points.incrementAndGet()
+		debugAudience.debug("$damager added to damagers")
+
+		controller.onDamaged(damager)
+	}
+
+	/** Gets the minimessage display name of this starship */
+	open fun getDisplayName(): String = type.formatted
+
+		/** Gets the component display name of this starship */
+	open fun getDisplayNameComponent(): Component = type.component
+
+	/** Gets the plain text serialized version of this starship's display name */
+	open fun getDisplayNamePlain(): String = type.displayName
 }

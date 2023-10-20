@@ -7,6 +7,7 @@ import net.horizonsend.ion.common.database.schema.nations.Nation
 import net.horizonsend.ion.common.database.schema.nations.Settlement
 import net.horizonsend.ion.common.database.schema.nations.Territory
 import net.horizonsend.ion.common.database.schema.starships.PlayerStarshipData
+import net.horizonsend.ion.common.database.schema.starships.StarshipData
 import net.horizonsend.ion.common.database.uuid
 import net.horizonsend.ion.common.extensions.hint
 import net.horizonsend.ion.common.extensions.serverErrorActionMessage
@@ -24,7 +25,8 @@ import net.horizonsend.ion.server.features.nations.region.Regions
 import net.horizonsend.ion.server.features.nations.region.types.RegionTerritory
 import net.horizonsend.ion.server.features.starship.PilotedStarships.getDisplayName
 import net.horizonsend.ion.server.features.starship.active.ActiveStarships
-import net.horizonsend.ion.server.features.starship.control.StarshipControl
+import net.horizonsend.ion.server.features.starship.control.movement.PlayerStarshipControl.isHoldingController
+import net.horizonsend.ion.server.features.starship.control.movement.StarshipControl
 import net.horizonsend.ion.server.features.starship.event.StarshipComputerOpenMenuEvent
 import net.horizonsend.ion.server.miscellaneous.utils.MenuHelper
 import net.horizonsend.ion.server.miscellaneous.utils.Tasks
@@ -70,13 +72,13 @@ object StarshipComputers : IonServerComponent() {
 			return
 		}
 
-		if (!StarshipControl.isHoldingController(player)) {
+		if (!isHoldingController(player)) {
 			player.userError("Not holding starship controller, ignoring computer click")
 			return
 		}
 
 		event.isCancelled = true
-		val data: PlayerStarshipData? = StarshipComputers[event.player.world, block.x, block.y, block.z]
+		val data: StarshipData? = StarshipComputers[event.player.world, block.x, block.y, block.z]
 
 		when (event.action) {
 			Action.LEFT_CLICK_BLOCK -> handleLeftClick(data, player, block)
@@ -85,7 +87,7 @@ object StarshipComputers : IonServerComponent() {
 		}
 	}
 
-	private fun handleLeftClick(data: PlayerStarshipData?, player: Player, block: Block) {
+	private fun handleLeftClick(data: StarshipData?, player: Player, block: Block) {
 		if (data == null) {
 			createComputer(player, block)
 			return
@@ -94,7 +96,7 @@ object StarshipComputers : IonServerComponent() {
 		tryOpenMenu(player, data)
 	}
 
-	private fun handleRightClick(data: PlayerStarshipData?, player: Player) {
+	private fun handleRightClick(data: StarshipData?, player: Player) {
 		if (data == null) {
 			return
 		}
@@ -106,7 +108,7 @@ object StarshipComputers : IonServerComponent() {
 	fun onBlockBreak(event: BlockBreakEvent) {
 		val block = event.block
 		// get a DEACTIVATED computer. Using StarshipComputers#get would include activated ones
-		val computer: PlayerStarshipData = DeactivatedPlayerStarships[block.world, block.x, block.y, block.z]
+		val computer: StarshipData = DeactivatedPlayerStarships[block.world, block.x, block.y, block.z]
 			?: return
 		val player = event.player
 		DeactivatedPlayerStarships.destroyAsync(computer) {
@@ -114,24 +116,30 @@ object StarshipComputers : IonServerComponent() {
 		}
 	}
 
-	operator fun get(world: World, x: Int, y: Int, z: Int): PlayerStarshipData? {
+	operator fun get(world: World, x: Int, y: Int, z: Int): StarshipData? {
 		return ActiveStarships.getByComputerLocation(world, x, y, z) ?: DeactivatedPlayerStarships[world, x, y, z]
 	}
 
 	private fun createComputer(player: Player, block: Block) {
 //		if (isRegionDenied(player, player.location)) return player.userError("You can only detect computers in territories you can access.")
 
-		DeactivatedPlayerStarships.createAsync(block.world, block.x, block.y, block.z, player.uniqueId) {
+		DeactivatedPlayerStarships.createPlayerShipAsync(block.world, block.x, block.y, block.z, player.uniqueId) {
 			player.successActionMessage(
 				"Registered starship computer! Left click again to open the menu."
 			)
 		}
 	}
 
-	private fun tryOpenMenu(player: Player, data: PlayerStarshipData) {
-		if (!data.isPilot(player) && !player.hasPermission("ion.core.starship.override") && !player.isTerritoryOwner()) {
+	private fun tryOpenMenu(player: Player, data: StarshipData) {
+		if (
+			data is PlayerStarshipData &&
+			!data.isPilot(player) &&
+			!player.hasPermission("ion.core.starship.override") &&
+			!player.isTerritoryOwner()
+			) {
 			Tasks.async {
 				val name: String? = SLPlayer.getName(data.captain)
+
 				if (name != null) {
 					player.userError(
 						"You're not a pilot of this ship! The captain is $name"
@@ -140,6 +148,8 @@ object StarshipComputers : IonServerComponent() {
 			}
 			return
 		}
+
+		if (data !is PlayerStarshipData && !player.hasPermission("ion.core.starship.override")) return
 
 		if (!StarshipComputerOpenMenuEvent(player).callEvent()) {
 			return
@@ -153,13 +163,6 @@ object StarshipComputers : IonServerComponent() {
 					tryReDetect(playerClicker, data)
 				}.setName(MiniMessage.miniMessage().deserialize("<dark_purple>Re-detect")),
 				0, 0
-			)
-
-			pane.addItem(
-				guiButton(Material.PLAYER_HEAD) {
-					openPilotsMenu(playerClicker, data)
-				}.setName(MiniMessage.miniMessage().deserialize("<gold>Pilots")),
-				1, 0
 			)
 
 			pane.addItem(
@@ -178,13 +181,22 @@ object StarshipComputers : IonServerComponent() {
 				3, 0
 			)
 
-			if (player.isTerritoryOwner()) {
+			if (data is PlayerStarshipData) {
 				pane.addItem(
-					guiButton(Material.RECOVERY_COMPASS) {
-						takeOwnership(player, data)
-					}.setName(text("Take ownership", RED, BOLD)),
-					5, 0
+					guiButton(Material.PLAYER_HEAD) {
+						openPilotsMenu(playerClicker, data)
+					}.setName(MiniMessage.miniMessage().deserialize("<gold>Pilots")),
+					1, 0
 				)
+
+				if (player.isTerritoryOwner()) {
+					pane.addItem(
+						guiButton(Material.RECOVERY_COMPASS) {
+							takeOwnership(player, data)
+						}.setName(text("Take ownership", RED, BOLD)),
+						5, 0
+					)
+				}
 			}
 
 			pane.addItem(
@@ -202,11 +214,11 @@ object StarshipComputers : IonServerComponent() {
 		}
 	}
 
-	private val lockMap = mutableMapOf<Oid<PlayerStarshipData>, Any>()
+	private val lockMap = mutableMapOf<Oid<out StarshipData>, Any>()
 
-	private fun getLock(dataId: Oid<PlayerStarshipData>): Any = lockMap.getOrPut(dataId) { Any() }
+	private fun getLock(dataId: Oid<out StarshipData>): Any = lockMap.getOrPut(dataId) { Any() }
 
-	private fun tryReDetect(player: Player, data: PlayerStarshipData) {
+	private fun tryReDetect(player: Player, data: StarshipData) {
 		if (ActiveStarships.findByPilot(player) != null) player.userError("WARNING: Redetecting while piloting will not succeed. You must release first, then redetect.")
 
 		Tasks.async {
@@ -281,7 +293,7 @@ object StarshipComputers : IonServerComponent() {
 		}
 	}
 
-	private fun startRename(player: Player, data: PlayerStarshipData) {
+	private fun startRename(player: Player, data: StarshipData) {
 		player.closeInventory()
 		player.input("Enter new ship name:") { r, input ->
 			Tasks.async {
@@ -348,7 +360,7 @@ object StarshipComputers : IonServerComponent() {
 		}
 	}
 
-	private fun openTypeMenu(player: Player, data: PlayerStarshipData) {
+	private fun openTypeMenu(player: Player, data: StarshipData) {
 		MenuHelper.apply {
 			val items = StarshipType.getUnlockedTypes(player).map { type ->
 				guiButton(type.menuItem) {
@@ -368,7 +380,7 @@ object StarshipComputers : IonServerComponent() {
 		}
 	}
 
-	private fun toggleLockEnabled(player: Player, data: PlayerStarshipData) {
+	private fun toggleLockEnabled(player: Player, data: StarshipData) {
 		val newValue = !data.isLockEnabled
 
 		DeactivatedPlayerStarships.updateLockEnabled(data, newValue)

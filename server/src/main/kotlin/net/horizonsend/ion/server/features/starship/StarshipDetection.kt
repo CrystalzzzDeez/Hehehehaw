@@ -2,8 +2,8 @@ package net.horizonsend.ion.server.features.starship
 
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet
-import net.horizonsend.ion.common.database.schema.starships.PlayerStarshipData
-import net.horizonsend.ion.common.miniMessage
+import net.horizonsend.ion.common.database.schema.starships.StarshipData
+import net.horizonsend.ion.common.utils.text.miniMessage
 import net.horizonsend.ion.server.IonServerComponent
 import net.horizonsend.ion.server.miscellaneous.utils.Vec3i
 import net.horizonsend.ion.server.miscellaneous.utils.actualType
@@ -22,6 +22,7 @@ import net.kyori.adventure.text.Component.text
 import net.kyori.adventure.text.format.NamedTextColor
 import net.kyori.adventure.text.format.TextDecoration
 import org.bukkit.Material
+import org.bukkit.World
 import org.bukkit.block.BlockFace
 import org.bukkit.block.data.BlockData
 import org.bukkit.block.data.Directional
@@ -60,12 +61,13 @@ object StarshipDetection : IonServerComponent() {
 	}
 	//endregion
 
-	fun detectNewState(data: PlayerStarshipData, detector: Audience? = null): PlayerStarshipState {
-		val world = data.bukkitWorld()
+	fun detectNewState(data: StarshipData, detector: Audience? = null, loadChunks: Boolean = false): StarshipState =
+		detectNewState(data.bukkitWorld(), Vec3i(data.blockKey), data.starshipType.actualType, detector, loadChunks)
+
+	fun detectNewState(world: World, computerLocation: Vec3i, type: StarshipType, detector: Audience? = null, loadChunks: Boolean = false): StarshipState {
 		/*
 						val forbiddenBlocks = ForbiddenBlocks.getForbiddenBlocks(world)
 		*/
-		val computerLocation = Vec3i(data.blockKey)
 
 		// blocks that were accepted
 		val blocks = mutableListOf<Vec3i>()
@@ -111,10 +113,12 @@ object StarshipDetection : IonServerComponent() {
 			val y = blockKeyY(key)
 			val z = blockKeyZ(key)
 
-			val blockData = getBlockDataSafe(world, x, y, z)
+			val blockData = if (loadChunks) world.getBlockData(x, y, z) else {
+				getBlockDataSafe(world, x, y, z)
 				// Do not allow checking ships larger than render distance.
 				// The type being null usually means the chunk is unloaded.
-				?: throw DetectionFailedException("The blocks went beyond loaded chunks!")
+					?: throw DetectionFailedException("The blocks went beyond loaded chunks!")
+			}
 
 			val material = blockData.material
 
@@ -186,8 +190,6 @@ object StarshipDetection : IonServerComponent() {
 			if (maxY == null || maxY < y) maxY = y
 			if (maxZ == null || maxZ < z) maxZ = z
 		}
-
-		val type = data.starshipType.actualType
 
 		// Validate the size
 		val size = blockTypes.size
@@ -268,7 +270,7 @@ object StarshipDetection : IonServerComponent() {
 		checkNotNull(maxY)
 		checkNotNull(maxZ)
 
-		return PlayerStarshipState(coveredChunks, blockTypes, Vec3i(minX, minY, minZ), Vec3i(maxX, maxY, maxZ))
+		return StarshipState(coveredChunks, blockTypes, Vec3i(minX, minY, minZ), Vec3i(maxX, maxY, maxZ))
 	}
 
 	fun isInventory(material: Material): Boolean {

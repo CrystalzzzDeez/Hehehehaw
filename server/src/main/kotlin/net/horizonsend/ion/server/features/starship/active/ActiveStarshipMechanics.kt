@@ -7,34 +7,32 @@ import net.horizonsend.ion.server.IonServerComponent
 import net.horizonsend.ion.server.features.starship.DeactivatedPlayerStarships
 import net.horizonsend.ion.server.features.starship.PilotedStarships
 import net.horizonsend.ion.server.features.starship.StarshipDestruction
-import net.horizonsend.ion.server.features.starship.control.StarshipControl
+import net.horizonsend.ion.server.features.starship.StarshipDestruction.MAX_SAFE_HULL_INTEGRITY
+import net.horizonsend.ion.server.features.starship.control.movement.PlayerStarshipControl.isHoldingController
+import net.horizonsend.ion.server.features.starship.damager.addToDamagers
+import net.horizonsend.ion.server.features.starship.damager.entityDamagerCache
 import net.horizonsend.ion.server.features.starship.subsystem.weapon.StarshipWeapons
 import net.horizonsend.ion.server.features.starship.subsystem.weapon.TurretWeaponSubsystem
 import net.horizonsend.ion.server.features.starship.subsystem.weapon.interfaces.AutoWeaponSubsystem
 import net.horizonsend.ion.server.miscellaneous.utils.Tasks
 import net.horizonsend.ion.server.miscellaneous.utils.Vec3i
 import net.horizonsend.ion.server.miscellaneous.utils.actionAndMsg
-import net.horizonsend.ion.server.miscellaneous.utils.isInRange
-import net.horizonsend.ion.server.miscellaneous.utils.randomEntry
 import org.bukkit.Bukkit
 import org.bukkit.Bukkit.getPluginManager
-import org.bukkit.Location
+import org.bukkit.entity.Entity
 import org.bukkit.entity.Player
+import org.bukkit.entity.Projectile
+import org.bukkit.entity.TNTPrimed
 import org.bukkit.event.EventHandler
 import org.bukkit.event.block.BlockBreakEvent
 import org.bukkit.event.entity.EntityDamageEvent
+import org.bukkit.event.entity.EntityExplodeEvent
 import org.bukkit.event.player.PlayerMoveEvent
 import org.dynmap.bukkit.DynmapPlugin
 import java.util.LinkedList
-import java.util.UUID
 import java.util.concurrent.TimeUnit
-import kotlin.collections.MutableSet
 import kotlin.collections.component1
 import kotlin.collections.component2
-import kotlin.collections.forEach
-import kotlin.collections.iterator
-import kotlin.collections.mutableSetOf
-import kotlin.collections.random
 
 object ActiveStarshipMechanics : IonServerComponent() {
 	override fun onEnable() {
@@ -50,14 +48,8 @@ object ActiveStarshipMechanics : IonServerComponent() {
 	}
 
 	private fun deactivateUnpilotedPlayerStarships() {
-		for (ship in ActiveStarships.allPlayerShips()) {
-			val minutesUnpiloted =
-				if (ship.pilot != null) 0 else TimeUnit.NANOSECONDS.toMinutes(System.nanoTime() - ship.lastUnpilotTime)
-			if (!PilotedStarships.isPiloted(ship) && minutesUnpiloted >= 10) {
-				if (ship.pilot == null && ship.minutesUnpiloted >= 5) {
-					DeactivatedPlayerStarships.deactivateAsync(ship)
-				}
-			}
+		for (ship in ActiveStarships.allControlledStarships()) {
+			if (ship.minutesUnpiloted >= 5) DeactivatedPlayerStarships.deactivateAsync(ship)
 		}
 	}
 
@@ -73,115 +65,36 @@ object ActiveStarshipMechanics : IonServerComponent() {
 
 	private fun fireAutoWeapons() {
 		for (ship in ActiveStarships.all()) {
-			val queuedShots = queueShots(ship)
+			val queuedShots = queueAutoShots(ship)
 			StarshipWeapons.fireQueuedShots(queuedShots, ship)
 		}
 	}
 
-	private fun queueShots(ship: ActiveStarship): LinkedList<StarshipWeapons.AutoQueuedShot> {
+	private fun queueAutoShots(ship: ActiveStarship): LinkedList<StarshipWeapons.AutoQueuedShot> {
 		val queuedShots = LinkedList<StarshipWeapons.AutoQueuedShot>()
-		if (!ship.randomTarget) {
-			for ((set: String, targetId: UUID) in ship.autoTurretTargets) {
-				val target = Bukkit.getPlayer(targetId) ?: continue
 
-				if (target.world != ship.serverLevel.world) {
-					continue
-				}
+		for ((node, target) in ship.autoTurretTargets) {
+			val targetLocation = target.type.get(target.identifier) ?: continue
+			if (targetLocation.world != ship.world) continue
 
-				val weapons = ship.weaponSets[set]
-				for (weapon in weapons) {
-					if (weapon !is AutoWeaponSubsystem) {
-						continue
-					}
+			val weapons = ship.weaponSets[node]
 
-					if (!weapon.isIntact()) {
-						continue
-					}
+			for (weapon in weapons) {
+				if (weapon !is AutoWeaponSubsystem) continue
+				if (!weapon.isIntact()) continue
 
-					var targetLoc: Location = target.eyeLocation
+				val targetVec = targetLocation.toVector()
+				val direct = targetVec.clone().subtract(ship.centerOfMass.toCenterVector()).normalize()
 
-					val targetRiding = ActiveStarships.findByPassenger(target)
-					if (targetRiding != null && weapon.shouldTargetRandomBlock(target)) {
-						targetLoc = Vec3i(targetRiding.blocks.random()).toLocation(ship.serverLevel.world).toCenterLocation()
-					}
+				if (targetVec.distanceSquared(weapon.pos.toCenterVector()) > weapon.range.squared()) continue
 
-					val targetVec = targetLoc.toVector()
-					val direct = targetVec.clone().subtract(ship.centerOfMassVec3i.toCenterVector()).normalize()
+				val dir = weapon.getAdjustedDir(direct, targetVec)
 
-					if (targetVec.distanceSquared(weapon.pos.toCenterVector()) > weapon.range.squared()) {
-						continue
-					}
+				if (weapon is TurretWeaponSubsystem && !weapon.ensureOriented(dir)) continue
+				if (!weapon.isCooledDown()) continue
+				if (!weapon.canFire(dir, targetVec)) continue
 
-					val dir = weapon.getAdjustedDir(direct, targetVec)
-
-					if (weapon is TurretWeaponSubsystem && !weapon.ensureOriented(dir)) {
-						continue
-					}
-
-					if (!weapon.isCooledDown()) {
-						continue
-					}
-
-					if (!weapon.canFire(dir, targetVec)) {
-						continue
-					}
-
-					queuedShots.add(StarshipWeapons.AutoQueuedShot(weapon, target, dir))
-				}
-			}
-		} else {
-			val weaponSets = ship.weaponSets.asMap()
-			for (set in weaponSets) {
-				val weapons = set.component2()
-
-				for (weapon in weapons) {
-					val validTargets: MutableSet<Player> = mutableSetOf()
-
-					if (weapon !is AutoWeaponSubsystem) {
-						continue
-					}
-
-					for (p: Player in ship.serverLevel.world.players) {
-						if (!p.location.isInRange(weapon.pos.toLocation(weapon.starship.serverLevel.world), weapon.range)) continue
-						if (p.world != ship.serverLevel.world) continue
-						if (ship.randomTargetBlacklist.contains(p.uniqueId)) continue
-						validTargets.add(p)
-					}
-					val target = validTargets.randomEntry()
-
-					if (!weapon.isIntact()) {
-						continue
-					}
-
-					var targetLoc: Location = target.eyeLocation
-
-					val targetRiding = ActiveStarships.findByPassenger(target)
-					if (targetRiding != null && weapon.shouldTargetRandomBlock(target)) {
-						targetLoc = Vec3i(targetRiding.blocks.randomEntry()).toLocation(ship.serverLevel.world).toCenterLocation()
-					}
-
-					val targetVec = targetLoc.toVector()
-					val direct = targetVec.clone().subtract(ship.centerOfMassVec3i.toCenterVector()).normalize()
-
-					if (targetVec.distanceSquared(weapon.pos.toCenterVector()) > weapon.range.squared()) {
-						continue
-					}
-
-					val dir = weapon.getAdjustedDir(direct, targetVec)
-
-					if (weapon is TurretWeaponSubsystem && !weapon.ensureOriented(dir)) {
-						continue
-					}
-
-					if (!weapon.isCooledDown()) {
-						continue
-					}
-
-					if (!weapon.canFire(dir, targetVec)) {
-						continue
-					}
-					queuedShots.add(StarshipWeapons.AutoQueuedShot(weapon, target, dir))
-				}
+				queuedShots.add(StarshipWeapons.AutoQueuedShot(weapon, target, dir))
 			}
 		}
 
@@ -190,17 +103,33 @@ object ActiveStarshipMechanics : IonServerComponent() {
 
 	private fun destroyLowHullIntegrityShips() {
 		ActiveStarships.all().forEach { ship ->
-			if (ship.hullIntegrity() < 0.8) {
+			if (ship.hullIntegrity() < MAX_SAFE_HULL_INTEGRITY) {
 				StarshipDestruction.destroy(ship)
 			}
 		}
 	}
 
 	@EventHandler
+	fun onEntityExplode(event: EntityExplodeEvent) {
+		val block = event.location.block
+		val world = block.world
+
+		val entity: Entity = when (val entity = event.entity) {
+			is Projectile -> entity.shooter as? Entity
+			is TNTPrimed -> entity.source
+			else -> entity
+		} ?: return
+
+		val damager = entityDamagerCache[entity]
+
+		addToDamagers(world, block, damager)
+	}
+
+	@EventHandler
 	fun onBlockBreak(event: BlockBreakEvent) {
 		if (ActiveStarships.findByBlock(event.block) != null) {
 			event.isCancelled = true
-			event.player actionAndMsg "&cThat block is part of an active starship!"
+			event.player.userError("That block is part of an active starship!")
 		}
 	}
 
@@ -218,7 +147,7 @@ object ActiveStarshipMechanics : IonServerComponent() {
 		Tasks.sync {
 			if (!starship.isWithinHitbox(player)) {
 				if (PilotedStarships[player] == starship) {
-					PilotedStarships.unpilot(starship, true)
+					PilotedStarships.unpilot(starship)
 					player.userError("You got outside of the ship, so it was unpiloted!")
 				} else {
 					starship.removePassenger(player.uniqueId)
@@ -261,16 +190,16 @@ object ActiveStarshipMechanics : IonServerComponent() {
 		}
 	}
 
-	private fun updateDynmapVisibility(player: Player, starship: ActivePlayerStarship?) {
+	private fun updateDynmapVisibility(player: Player, starship: ActiveControlledStarship?) {
 		if (!getPluginManager().isPluginEnabled("dynmap")) return
 
 		val isNoStarship = starship == null
-		val isHoldingController = StarshipControl.isHoldingController(player)
+		val isHoldingController = isHoldingController(player)
 		val isInvisible = isNoStarship && !isHoldingController
 		DynmapPlugin.plugin.assertPlayerInvisibility(player, isInvisible, IonServer)
 	}
 
-	private fun updateGlowing(player: Player, starship: ActivePlayerStarship?) {
+	private fun updateGlowing(player: Player, starship: ActiveControlledStarship?) {
 		val shouldGlow = starship != null
 		if (player.isGlowing != shouldGlow) {
 			player.isGlowing = shouldGlow
@@ -279,6 +208,6 @@ object ActiveStarshipMechanics : IonServerComponent() {
 
 	override fun onDisable() {
 		// release all ships on shutdown
-		ActiveStarships.allPlayerShips().forEach { DeactivatedPlayerStarships.deactivateNow(it) }
+		ActiveStarships.allControlledStarships().forEach { DeactivatedPlayerStarships.deactivateNow(it) }
 	}
 }

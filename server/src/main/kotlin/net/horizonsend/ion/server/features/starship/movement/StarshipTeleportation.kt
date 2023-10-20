@@ -3,9 +3,9 @@ package net.horizonsend.ion.server.features.starship.movement
 import net.horizonsend.ion.common.extensions.information
 import net.horizonsend.ion.common.extensions.userError
 import net.horizonsend.ion.common.utils.miscellaneous.d
-import net.horizonsend.ion.server.features.starship.active.ActivePlayerStarship
+import net.horizonsend.ion.server.features.starship.active.ActiveControlledStarship
 import net.horizonsend.ion.server.features.starship.active.ActiveStarship
-import net.horizonsend.ion.server.features.starship.control.StarshipCruising
+import net.horizonsend.ion.server.features.starship.control.movement.StarshipCruising
 import net.horizonsend.ion.server.miscellaneous.utils.Vec3i
 import org.bukkit.Location
 import org.bukkit.World
@@ -19,14 +19,14 @@ object StarshipTeleportation {
 		val dy = y - origin.y
 		val dz = z - origin.z
 
-		if (starship is ActivePlayerStarship) {
+		if (starship is ActiveControlledStarship) {
 			StarshipCruising.forceStopCruising(starship)
 			starship.setDirectControlEnabled(false)
 		}
 
 		starship.isTeleporting = true
 
-		val newWorld = if (destination.world != starship.serverLevel.world) destination.world else null
+		val newWorld = if (destination.world != starship.world) destination.world else null
 
 		return tryTeleport(starship, dx, dy, dz, newWorld).whenComplete { ok, ex ->
 			starship.isTeleporting = false
@@ -52,7 +52,7 @@ object StarshipTeleportation {
 			return CompletableFuture.completedFuture(false)
 		}
 
-		val world = newWorld ?: starship.serverLevel.world
+		val world = newWorld ?: starship.world
 
 		if (wouldBeOutOfWorldBorder(starship, world, previousDX, previousDZ)) {
 			starship.onlinePassengers.forEach { passenger ->
@@ -64,6 +64,8 @@ object StarshipTeleportation {
 
 		var adjustX = previousAdjustX ?: randomOffset()
 		var adjustZ = previousAdjustZ ?: randomOffset()
+
+		println("Trying to teleport to ${starship.centerOfMass.x + previousDX + adjustX}, ${starship.centerOfMass.z + previousDZ + adjustZ}")
 
 		while (wouldBeOutOfWorldBorder(starship, world, previousDX + adjustX, previousDZ + adjustZ)) {
 			adjustX = previousAdjustX ?: randomOffset()
@@ -80,9 +82,8 @@ object StarshipTeleportation {
 					return@thenComposeAsync CompletableFuture.completedFuture(true)
 				}
 
-				starship.onlinePassengers.forEach { passenger ->
-					passenger.information("Adjusting position...")
-				}
+				starship.information("Adjusting position...")
+
 
 				val tries = previousTries + 1
 				return@thenComposeAsync tryTeleport(starship, dx, dy, dz, newWorld, tries, adjustX, adjustZ)

@@ -1,7 +1,5 @@
 package net.horizonsend.ion.server.features.progression
 
-import com.google.common.cache.Cache
-import com.google.common.cache.CacheBuilder
 import github.scarsz.discordsrv.DiscordSRV
 import github.scarsz.discordsrv.dependencies.jda.api.EmbedBuilder
 import github.scarsz.discordsrv.dependencies.jda.api.entities.MessageEmbed
@@ -10,6 +8,7 @@ import net.horizonsend.ion.common.Colors
 import net.horizonsend.ion.common.database.cache.nations.NationCache
 import net.horizonsend.ion.common.database.cache.nations.RelationCache
 import net.horizonsend.ion.common.database.schema.misc.SLPlayer
+import net.horizonsend.ion.common.utils.text.plainText
 import net.horizonsend.ion.server.IonServer
 import net.horizonsend.ion.server.IonServerComponent
 import net.horizonsend.ion.server.features.achievements.Achievement
@@ -18,21 +17,24 @@ import net.horizonsend.ion.server.features.misc.CombatNPCKillEvent
 import net.horizonsend.ion.server.features.starship.PilotedStarships.getDisplayNameComponent
 import net.horizonsend.ion.server.features.starship.PilotedStarships.getRawDisplayName
 import net.horizonsend.ion.server.features.starship.StarshipType
-import net.horizonsend.ion.server.features.starship.active.ActivePlayerStarship
+import net.horizonsend.ion.server.features.starship.active.ActiveControlledStarship
 import net.horizonsend.ion.server.features.starship.active.ActiveStarship
 import net.horizonsend.ion.server.features.starship.active.ActiveStarships
+import net.horizonsend.ion.server.features.starship.control.controllers.player.PlayerController
+import net.horizonsend.ion.server.features.starship.damager.Damager
+import net.horizonsend.ion.server.features.starship.damager.PlayerDamager
+import net.horizonsend.ion.server.features.starship.damager.PlayerDamagerWrapper
 import net.horizonsend.ion.server.features.starship.event.StarshipExplodeEvent
-import net.horizonsend.ion.server.features.starship.event.StarshipPilotedEvent
 import net.horizonsend.ion.server.miscellaneous.utils.Notify
 import net.horizonsend.ion.server.miscellaneous.utils.Tasks
 import net.horizonsend.ion.server.miscellaneous.utils.get
 import net.kyori.adventure.text.Component
+import net.kyori.adventure.text.Component.text
+import net.kyori.adventure.text.TextComponent
 import net.kyori.adventure.text.format.NamedTextColor
 import net.kyori.adventure.text.format.TextColor
-import net.kyori.adventure.text.minimessage.MiniMessage
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer
 import org.bukkit.Bukkit
-import org.bukkit.Bukkit.getOfflinePlayer
-import org.bukkit.Bukkit.getPlayer
 import org.bukkit.Bukkit.getServer
 import org.bukkit.entity.Entity
 import org.bukkit.entity.Player
@@ -47,41 +49,24 @@ import kotlin.math.pow
 import kotlin.math.sqrt
 
 object ShipKillXP : IonServerComponent() {
-	data class Damager(val id: UUID, val size: Int)
-
-	private data class ShipDamageData(
-		val map: MutableMap<Damager, AtomicInteger>,
-		val size: Int,
-		val type: StarshipType,
-		val name: String?
+	data class ShipDamageData(
+		val points: AtomicInteger = AtomicInteger(),
+		var lastDamaged: Long = System.currentTimeMillis()
 	)
 
-	private fun data(starship: ActiveStarship): ShipDamageData {
-		// needs to be a direct reference to the starship's damagers so it stays synchronized
-		val map = starship.damagers
-		val size = starship.initialBlockCount
-		val type = starship.type
-		val name = (starship as ActivePlayerStarship).data.name
-		return ShipDamageData(map, size, type, name)
-	}
-
-	private val map: Cache<UUID, ShipDamageData> = CacheBuilder.newBuilder()
-		.expireAfterWrite(5L, TimeUnit.MINUTES)
-		.build()
-
-	@EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-	fun onStarshipPilot(event: StarshipPilotedEvent) {
-		addPassengers(event.starship)
-	}
+	val damagerExpiration = System.currentTimeMillis() - TimeUnit.MINUTES.toMillis(5)
 
 	@EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
 	fun onStarshipExplode(event: StarshipExplodeEvent) {
-		onShipKill(event.starship)
+		val arena = IonServer.configuration.serverName.equals("creative", ignoreCase = true)
+
+		onShipKill(event.starship, event.starship.controller.pilotName.plainText(), arena)
 	}
 
 	@EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
 	fun onCombatNPCKill(event: CombatNPCKillEvent) {
 		val arena = IonServer.configuration.serverName.equals("creative", ignoreCase = true)
+
 		onPlayerKilled(event.id, event.name, event.killer, arena)
 	}
 
@@ -90,186 +75,207 @@ object ShipKillXP : IonServerComponent() {
 		val player: Player = event.entity
 		val killer: Player? = player.killer
 		val arena = IonServer.configuration.serverName.equals("creative", ignoreCase = true)
+
 		onPlayerKilled(player.uniqueId, player.name, killer, arena)
 	}
 
-	private fun addPassengers(starship: ActiveStarship) {
-		for (id in starship.passengerIDs) {
-			map.put(id, data(starship))
-		}
-	}
-
 	private fun onPlayerKilled(killed: UUID, killedName: String, killer: Entity?, arena: Boolean) {
-		val data = map.getIfPresent(killed) ?: return
+		val killedStarship = ActiveStarships.findByPilot(killed) ?: return
+
 		if (killer is Player) {
-			val damager = Damager(killer.uniqueId, ActiveStarships.findByPassenger(killer)!!.initialBlockCount)
-			data.map.getOrPut(damager) { AtomicInteger() }.incrementAndGet()
+			val starship = ActiveStarships.findByPassenger(killer) ?: return
+			val damager = PlayerDamagerWrapper(killer, starship)
+
+			val data = killedStarship.damagers.getOrPut(damager) { ShipDamageData(AtomicInteger(), System.currentTimeMillis()) }
+
+			data.points.incrementAndGet()
+			data.lastDamaged = System.currentTimeMillis()
 		}
-		onShipKill(killed, killedName, data, arena)
+
+		onShipKill(killedStarship, killedName, arena)
 	}
 
-	private fun onShipKill(starship: ActiveStarship) {
-		IonServer.slF4JLogger.info("ship killed at ${starship.centerOfMass.x} ${starship.centerOfMass.y} ${starship.centerOfMass.z}")
+	private fun onShipKill(starship: ActiveStarship, killedPilotName: String, arena: Boolean) {
+		log.info(
+			"ship killed at ${starship.centerOfMass}. " +
+				"Pilot: ${starship.controller}. " +
+				"Damagers: ${starship.damagers}"
+		)
 
-		val data = data(starship)
-		for (id in starship.passengerIDs) {
-			val killedName = getPlayer(id)?.name ?: "UNKNOWN"
-			val arena = IonServer.configuration.serverName.equals("creative", ignoreCase = true)
-			onShipKill(id, killedName, data, arena)
-		}
-	}
+		val dataMap = starship.damagers
+			.filter { (damager, _) ->
+				if (damager !is PlayerDamager) return@filter false
 
-	private fun onShipKill(killed: UUID, killedName: String, data: ShipDamageData, arena: Boolean) {
-		val dataMap: Map<Damager, Int> = data.map.filterKeys { damager ->
-			// require they be online to get xp
-			// if they have this perm, e.g. someone in dutymode or on creative, they don't get xp
-			getPlayer(damager.id)?.hasPermission("starships.noxp") == false
-		}.mapValues { it.value.get() }
+				// require they be online to get xp
+				// if they have this perm, e.g. someone in dutymode or on creative, they don't get xp
+				return@filter !damager.player.hasPermission("starships.noxp")
+			}
+			.toMutableMap()
 
-		val sum = dataMap.values.sum().toDouble()
+		val killedName: Component? = (starship as? ActiveControlledStarship)?.let { getDisplayNameComponent(it.data) }
 
-		processDamagers(dataMap, data, sum, killedName, killed, arena)
-
-		map.invalidate(killed)
+		processDamagers(starship, dataMap)
+		shipKillMessage(killedPilotName, killedName, starship.type, starship.damagers, arena)
 	}
 
 	private fun processDamagers(
-		dataMap: Map<Damager, Int>,
-		data: ShipDamageData,
-		sum: Double,
-		killedName: String,
-		killed: UUID,
-		arena: Boolean
+		starship: ActiveStarship,
+		dataMap: MutableMap<Damager, ShipDamageData> // Filtered
 	) {
-		for ((damager, points) in dataMap.entries) {
-			val player = getPlayer(damager.id) ?: continue // shouldn't happen
-			val killedSize = data.size.toDouble()
+		val sum = dataMap.values.sumOf { it.points.get() }
+
+		for ((damager, data) in dataMap.entries) {
+			val (points, timeStamp) = data
+
+			if (timeStamp < damagerExpiration) continue
+
+			val player = (damager as? PlayerDamager)?.player ?: continue // shouldn't happen
+			val killedSize = starship.initialBlockCount.toDouble()
 
 			val pilotNation = SLPlayer[player].nation
-			val killedNation = SLPlayer[getPlayer(killedName)!!].nation
+
+			val killedPlayer: Player? = (starship.controller as? PlayerController)?.player
+			val killedNation = killedPlayer?.let { SLPlayer[it].nation }
 
 			if (pilotNation != null && killedNation != null) {
 				if (RelationCache[pilotNation, killedNation].ordinal >= 5) {
-					data.map.remove(damager)
+					dataMap.remove(damager)
 					continue
 				}
 			}
 
-			val percent = points / sum
+			val percent = points.get() / sum
 			val xp = ((sqrt(killedSize.pow(2.0) / sqrt(killedSize * 0.00005))) * percent).toInt()
 
 			if (xp > 0) {
-				SLXP.addAsync(player, xp)
-				log.info("Gave ${player.name} $xp XP for ship-killing $killedName")
+				damager.rewardXP(xp)
+				log.info("Gave ${player.name} $xp XP for ship-killing ${starship.controller.pilotName.plainText()}")
 			}
 
-			if (points > 0 && damager.id != killed) {
-				getPlayer(damager.id)?.rewardAchievement(Achievement.KILL_SHIP)
-			}
+			if (points.get() > 0 && player.uniqueId != killedPlayer?.uniqueId) player.rewardAchievement(Achievement.KILL_SHIP)
 		}
-		killMessage(killedName, data, arena)
 	}
 
-	private fun killMessage(killedName: String, data: ShipDamageData, arena: Boolean) {
-		val descending = data.map.toList().sortedByDescending { it.second.get() }.toMutableList()
+	private fun shipKillMessage(
+		sunkPilotName: String,
+		sunkShipName: Component?,
+		sunkType: StarshipType,
+		data: MutableMap<Damager, ShipDamageData>,
+		arena: Boolean
+	) {
+		val descending = data.toList().sortedByDescending { it.second.lastDamaged }.toMutableList()
 		val alertFeedbackColor = TextColor.color(Colors.ALERT)
 
 		if (descending.isEmpty()) return
 
 		// Begin killed ship formatting
-		val killedShipName = data.name?.let {
-			MiniMessage.miniMessage().deserialize(it)
-		} ?: Component.text("A ").color(alertFeedbackColor).append(data.type.component)
+		val killedShipName = sunkShipName ?: text("A ").color(alertFeedbackColor).append(sunkType.component)
 
-		val killedNationColor = SLPlayer.findIdByName(killedName)
+		val killedNationColor = SLPlayer.findIdByName(sunkPilotName)
 			?.let { SLPlayer[it]?.nation?.let { nationID -> NationCache[nationID].color } }
 			?: 16777215 // white // So many null checks, meh, it's not called too often.
 
-		val killedShipHover = Component.text()
-			.append(Component.text(data.size).color(NamedTextColor.WHITE))
-			.append(Component.text(" block ").color(NamedTextColor.WHITE))
-			.append(data.type.component)
+		val killedShipHover = text()
+			.append(text(data.size).color(NamedTextColor.WHITE))
+			.append(text(" block ").color(NamedTextColor.WHITE))
+			.append(sunkType.component)
 			.build()
 			.asHoverEvent()
 		// End killed ship formatting
 
 		// Begin killer ship formatting
 		val killer = descending.first().first; descending.removeFirst() // remove to prevent duplicate during assists
-		val killerShip = ActiveStarships.findByPassenger(getPlayer(killer.id)!!)!!
+		val killerShip = killer.starship
 
-		val killerShipName =
-			(killerShip as? ActivePlayerStarship)?.let { getDisplayNameComponent(it.data) }
-				?: Component.text("a ").color(alertFeedbackColor).append(killerShip.type.component)
+		val killerMessage: Component = killerShip?.let {
+			val message = text()
 
-		val killerNationColor = SLPlayer[getPlayer(killer.id)!!].nation?.let {
-				nationID -> NationCache[nationID].color
-		} ?: 16777215 // white // So many null checks, meh, it's not called too often.
+			val killerShipName = (killerShip as? ActiveControlledStarship)?.let { getDisplayNameComponent(it.data) }
+				?: text("a ").color(alertFeedbackColor).append(killerShip.type.component)
 
-		val killerShipHover = Component.text()
-			.append(Component.text(killerShip.initialBlockCount).color(NamedTextColor.WHITE))
-			.append(Component.text(" block ").color(NamedTextColor.WHITE))
-			.append(killerShip.type.component)
-			.build()
-			.asHoverEvent()
-		// End killer ship formatting
+			val killerNationColor = (killer as? PlayerDamager)?.let {
+				SLPlayer[it.player].nation?.let {
+					nationID -> NationCache[nationID].color
+				}
+			} ?: 16777215// white
+
+			val killerShipHover = text()
+				.append(text(killerShip.initialBlockCount).color(NamedTextColor.WHITE))
+				.append(text(" block ").color(NamedTextColor.WHITE))
+				.append(killerShip.type.component)
+				.build()
+				.asHoverEvent()
+			// End killer ship formatting
+
+			message
+				.append(killer.getDisplayName().color(TextColor.color(killerNationColor)).hoverEvent(killerShipHover))
+				.append(text(" piloting ").color(alertFeedbackColor).hoverEvent(killerShipHover))
+				.append(killerShipName.hoverEvent(killerShipHover))
+				.build()
+		} ?: killer.getDisplayName()
 
 		// Begin message
-		val message = Component.text()
+		val message = text()
 
 		if (arena) {
 			message
-				.append(Component.text("[").asComponent().color(TextColor.color(85, 85, 85)))
-				.append(Component.text("Space Arena").asComponent().color(TextColor.color(255, 255, 102)))
-				.append(Component.text("] ").asComponent().color(TextColor.color(85, 85, 85)))
+				.append(text("[").asComponent().color(TextColor.color(85, 85, 85)))
+				.append(text("Space Arena").asComponent().color(TextColor.color(255, 255, 102)))
+				.append(text("] ").asComponent().color(TextColor.color(85, 85, 85)))
 		}
 
 		message
 			.append(killedShipName.hoverEvent(killedShipHover))
-			.append(Component.text(" piloted by ").color(alertFeedbackColor).hoverEvent(killedShipHover))
-			.append(Component.text(killedName).color(TextColor.color(killedNationColor)).hoverEvent(killedShipHover))
-			.append(Component.text(" was sunk by ").color(alertFeedbackColor))
-			.append(Component.text(getPlayer(killer.id)!!.name).color(TextColor.color(killerNationColor)).hoverEvent(killerShipHover))
-			.append(Component.text(" piloting ").color(alertFeedbackColor).hoverEvent(killerShipHover))
-			.append(killerShipName.hoverEvent(killerShipHover))
+			.append(text(" piloted by ").color(alertFeedbackColor).hoverEvent(killedShipHover))
+			.append(text(sunkPilotName).color(TextColor.color(killedNationColor)).hoverEvent(killedShipHover))
+			.append(text(" was sunk by ").color(alertFeedbackColor))
+			.append(killerMessage)
 
-		if (data.map.size > 1) {
-			message.append(Component.text(", assisted by: ").color(alertFeedbackColor))
+		if (data.size > 1) {
+			message.append(text(", assisted by: ").color(alertFeedbackColor))
 
-			var remainingAssists = data.map.size
+			var remainingAssists = data.size
 
-			for (assist in descending) {
-				val assistPlayer = getPlayer(assist.first.id) ?: continue
-				val assistShip = ActiveStarships.findByPilot(assistPlayer) ?: continue
-				val assistNationColor = SLPlayer[assistPlayer].nation?.let {
-						nationID -> NationCache[nationID].color
+			for ((damager, _) in descending) {
+				val assistShip = damager.starship
+				val assistNationColor = (damager as? PlayerDamager)?.let { playerDamager ->
+					SLPlayer[playerDamager.player].nation?.let { nationID ->
+						NationCache[nationID].color
+					}
 				} ?: 16777215 // white
-				val assistShipName = getDisplayNameComponent(assistShip.data)
-				val assistHoverEvent = Component.text()
-					.append(Component.text(assistShip.initialBlockCount).color(NamedTextColor.WHITE))
-					.append(Component.text(" block ").color(NamedTextColor.GRAY))
-					.append(assistShip.type.component)
-					.build()
-					.asHoverEvent()
 
 				message
 					.append(Component.newline())
-					.append(Component.text(assistPlayer.name).color(TextColor.color(assistNationColor)).hoverEvent(assistHoverEvent))
-					.append(Component.text(" piloting ").color(alertFeedbackColor).hoverEvent(assistHoverEvent))
+					.append(damager.getDisplayName().color(TextColor.color(assistNationColor)))
 
-                assistShipName.let {
+				if (assistShip != null) {
+					val assistShipName = (assistShip as? ActiveControlledStarship)?.let { getDisplayNameComponent(assistShip.data) }
+					val assistHoverEvent = text()
+						.append(text(assistShip.initialBlockCount).color(NamedTextColor.WHITE))
+						.append(text(" block ").color(NamedTextColor.GRAY))
+						.append(assistShip.type.component)
+						.build()
+						.asHoverEvent()
+
 					message
-						.append(it)
-						.append(Component.text(", a ").color(alertFeedbackColor))
-				}
+						.append(text(" piloting ").color(alertFeedbackColor).hoverEvent(assistHoverEvent))
 
-				message
-					.append(Component.text(assistShip.initialBlockCount).color(NamedTextColor.WHITE))
-					.append(Component.text(" block ").color(alertFeedbackColor))
-					.append(assistShip.type.component)
+					assistShipName?.let {
+						message
+							.append(it)
+							.append(text(", a ").color(alertFeedbackColor))
+					}
+
+					message
+						.append(text(assistShip.initialBlockCount).color(NamedTextColor.WHITE))
+						.append(text(" block ").color(alertFeedbackColor))
+						.append(assistShip.type.component)
+						.hoverEvent(assistHoverEvent)
+				}
 
 				remainingAssists--
 
-				if (remainingAssists > 1) message.append(Component.text(",").color(alertFeedbackColor))
+				if (remainingAssists > 1) message.append(text(",").color(alertFeedbackColor))
 			}
 		}
 
@@ -282,17 +288,24 @@ object ShipKillXP : IonServerComponent() {
 					.getDestinationTextChannelForGameChannelName("events") ?: return@async
 
 				// Formatting the messages
-				val killedShipDiscordName = data.name?.let { it.replace("<[^>]*>".toRegex(), "") + ", a" } ?: " a"
-				val killerShipDiscordName = (killerShip as? ActivePlayerStarship)?.data?.name?.let {
+				val sunkShipNameString = sunkShipName?.let { PlainTextComponentSerializer.plainText().serialize(it) }
+
+				val killedShipDiscordName = sunkShipNameString?.let { it.replace("<[^>]*>".toRegex(), "") + ", a" } ?: " a"
+				val killerShipDiscordName = (killerShip as? ActiveControlledStarship)?.data?.name?.let {
 					it.replace("<[^>]*>".toRegex(), "") + ", a"
 				} ?: " a"
 
 				val discordMessage =
-					"$killedShipDiscordName ${data.size} block ${data.type.displayName}, piloted by $killedName, was shot down by " +
-						"${getOfflinePlayer(killer.id).name}, piloting $killerShipDiscordName ${killer.size} block ${killerShip.type.displayName}."
+					"$killedShipDiscordName ${data.size} block ${sunkType.displayName}, piloted by $sunkPilotName, was shot down by " +
+						if (killer.starship != null) { "${
+							(killer.getDisplayName() as TextComponent).content()
+						}, piloting $killerShipDiscordName ${killer.starship!!.initialBlockCount} block ${
+							killerShip!!.type.displayName
+						}."
+						} else (killer.getDisplayName() as TextComponent).content()
 				// end formatting
 
-				val headURL = "https://minotar.net/avatar/$killedName"
+				val headURL = "https://minotar.net/avatar/$sunkPilotName"
 				// end nice extras
 
 				val embed = EmbedBuilder() // Build the embed
@@ -303,15 +316,21 @@ object ShipKillXP : IonServerComponent() {
 					.addField(MessageEmbed.Field(discordMessage, "", false))
 
 				// Assists section
-				if (data.map.size > 1) {
+				if (data.size > 1) {
 					var assists = "" // Build a string to put all the assists on newlines in the same field
 
-					for (assist in descending) {
-						val assistPlayer = getPlayer(assist.first.id) ?: continue
-						val assistShip = ActiveStarships.findByPilot(assistPlayer) ?: continue
-						val assistName = assistShip.data.name?.let { getRawDisplayName(assistShip.data) + ", a" } ?: "a"
+					for ((assistDamager, _) in descending) {
+						val name = (assistDamager.getDisplayName() as? TextComponent)?.content() ?: continue
 
-						assists += "${assistPlayer.name}, piloting $assistName ${assist.first.size} block ${assistShip.type.displayName}\n"
+						val assistShip = assistDamager.starship
+						val assistShipName = if (assistDamager.starship !is ActiveControlledStarship)
+							"piloting ${
+								(assistShip as ActiveControlledStarship).data.name?.let {
+									getRawDisplayName(assistShip.data) + ", a"
+								} ?: "a"} ${assistDamager.starship!!} block ${assistShip.type.displayName}\n"
+						else "\n"
+
+						assists += "$name, $assistShipName"
 					}
 
 					embed.addField(MessageEmbed.Field("Assisted by:", assists, false))

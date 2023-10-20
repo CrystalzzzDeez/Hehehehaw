@@ -2,16 +2,22 @@ package net.horizonsend.ion.server.features.transport
 
 import com.google.common.cache.CacheBuilder
 import com.google.common.cache.CacheLoader
-import net.horizonsend.ion.server.IonServer
 import net.horizonsend.ion.server.IonServerComponent
-import net.horizonsend.ion.server.command.admin.IonCommand
 import net.horizonsend.ion.server.features.machine.PowerMachines
 import net.horizonsend.ion.server.features.multiblock.Multiblocks
 import net.horizonsend.ion.server.features.multiblock.PowerStoringMultiblock
 import net.horizonsend.ion.server.features.multiblock.areashield.AreaShield
-import net.horizonsend.ion.server.miscellaneous.utils.*
-import net.minecraft.core.BlockPos
-import org.bukkit.Bukkit
+import net.horizonsend.ion.server.miscellaneous.utils.ADJACENT_BLOCK_FACES
+import net.horizonsend.ion.server.miscellaneous.utils.Tasks
+import net.horizonsend.ion.server.miscellaneous.utils.Vec3i
+import net.horizonsend.ion.server.miscellaneous.utils.debugHighlightBlock
+import net.horizonsend.ion.server.miscellaneous.utils.getBlockDataSafe
+import net.horizonsend.ion.server.miscellaneous.utils.getBlockTypeSafe
+import net.horizonsend.ion.server.miscellaneous.utils.getStateIfLoaded
+import net.horizonsend.ion.server.miscellaneous.utils.matchesAxis
+import net.horizonsend.ion.server.miscellaneous.utils.metrics
+import net.horizonsend.ion.server.miscellaneous.utils.orNull
+import net.horizonsend.ion.server.miscellaneous.utils.randomEntry
 import org.bukkit.Location
 import org.bukkit.Material
 import org.bukkit.World
@@ -25,6 +31,8 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadLocalRandom
 import java.util.concurrent.TimeUnit
+import kotlin.collections.component1
+import kotlin.collections.component2
 import kotlin.math.min
 import kotlin.system.measureNanoTime
 
@@ -108,7 +116,7 @@ object Wires : IonServerComponent() {
 			}
 
 			if (System.nanoTime() - start > maxTime) {
-				IonServer.slF4JLogger.warn("Power update took too long!")
+				log.warn("Power update took too long!")
 			}
 
 			for ((sign, power) in powerSignUpdateCache.asMap()) {

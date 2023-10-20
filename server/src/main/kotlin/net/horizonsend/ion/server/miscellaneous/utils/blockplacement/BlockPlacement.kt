@@ -1,9 +1,9 @@
 package net.horizonsend.ion.server.miscellaneous.utils.blockplacement
 
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap
+import net.horizonsend.ion.server.miscellaneous.utils.Tasks
 import net.minecraft.world.level.block.state.BlockState
 import net.starlegacy.javautil.blockplacement.BlockPlacementRaw
-import net.horizonsend.ion.server.miscellaneous.utils.Tasks
 import org.bukkit.World
 
 object BlockPlacement {
@@ -17,7 +17,7 @@ object BlockPlacement {
 
 	fun flush(onComplete: ((World) -> Unit)? = null): Unit = raw.flush(onComplete)
 
-	// can be called async
+	/** can be called async */
 	fun placeQueueEfficiently(
 		world: World,
 		queue: Long2ObjectOpenHashMap<BlockState>,

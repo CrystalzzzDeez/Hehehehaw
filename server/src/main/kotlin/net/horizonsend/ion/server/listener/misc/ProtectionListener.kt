@@ -1,6 +1,7 @@
 package net.horizonsend.ion.server.listener.misc
 
 import io.papermc.paper.event.player.PlayerItemFrameChangeEvent
+import net.horizonsend.ion.common.database.schema.starships.PlayerStarshipData
 import net.horizonsend.ion.common.utils.lpHasPermission
 import net.horizonsend.ion.server.command.nations.SpaceStationCommand
 import net.horizonsend.ion.server.features.nations.region.Regions
@@ -106,6 +107,9 @@ object ProtectionListener : SLEventListener() {
 		val (world, x, y, z) = location
 		val shipContaining = DeactivatedPlayerStarships.getContaining(world!!, x.toInt(), y.toInt(), z.toInt())
 
+		// Need to also check for null
+		if (shipContaining !is PlayerStarshipData?) return true
+
 		if (shipContaining?.isPilot(player) == true) denied = false
 
 		if (isLockedShipDenied(player, location)) return true
@@ -166,6 +170,8 @@ object ProtectionListener : SLEventListener() {
 
 		if (!data.isLockActive()) return false
 
+		if (data !is PlayerStarshipData) return false
+
 		return !data.isPilot(player)
 	}
 
@@ -180,9 +186,7 @@ object ProtectionListener : SLEventListener() {
 	}
 
 	private fun onExplode(cancellable: Cancellable, location: Location, blocks: List<Block>) {
-		if (!isProtectedCity(location)) {
-			return
-		}
+		if (!isProtectedCity(location)) return
 
 		cancellable.isCancelled = true
 

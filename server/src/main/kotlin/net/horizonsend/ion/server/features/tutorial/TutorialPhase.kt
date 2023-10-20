@@ -2,23 +2,24 @@ package net.horizonsend.ion.server.features.tutorial
 
 import net.horizonsend.ion.server.IonServer
 import net.horizonsend.ion.server.features.starship.StarshipDestruction
-import net.horizonsend.ion.server.features.starship.control.StarshipControl
+import net.horizonsend.ion.server.features.starship.control.controllers.player.PlayerController
+import net.horizonsend.ion.server.features.starship.control.movement.StarshipControl
 import net.horizonsend.ion.server.features.starship.event.StarshipComputerOpenMenuEvent
 import net.horizonsend.ion.server.features.starship.event.StarshipDetectEvent
 import net.horizonsend.ion.server.features.starship.event.StarshipPilotEvent
-import net.horizonsend.ion.server.features.starship.event.StarshipRotateEvent
-import net.horizonsend.ion.server.features.starship.event.StarshipStartCruisingEvent
-import net.horizonsend.ion.server.features.starship.event.StarshipStopCruisingEvent
-import net.horizonsend.ion.server.features.starship.event.StarshipTranslateEvent
 import net.horizonsend.ion.server.features.starship.event.StarshipUnpilotEvent
+import net.horizonsend.ion.server.features.starship.event.movement.StarshipRotateEvent
+import net.horizonsend.ion.server.features.starship.event.movement.StarshipStartCruisingEvent
+import net.horizonsend.ion.server.features.starship.event.movement.StarshipStopCruisingEvent
+import net.horizonsend.ion.server.features.starship.event.movement.StarshipTranslateEvent
 import net.horizonsend.ion.server.features.tutorial.message.ActionMessage
 import net.horizonsend.ion.server.features.tutorial.message.PopupMessage
 import net.horizonsend.ion.server.features.tutorial.message.TutorialMessage
 import net.horizonsend.ion.server.miscellaneous.utils.Tasks
-import net.horizonsend.ion.server.miscellaneous.utils.colorize
-import net.horizonsend.ion.server.miscellaneous.utils.setDisplayNameAndGet
 import net.horizonsend.ion.server.miscellaneous.utils.action
+import net.horizonsend.ion.server.miscellaneous.utils.colorize
 import net.horizonsend.ion.server.miscellaneous.utils.msg
+import net.horizonsend.ion.server.miscellaneous.utils.setDisplayNameAndGet
 import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.entity.Player
@@ -112,7 +113,7 @@ enum class TutorialPhase(vararg val messages: TutorialMessage, val cancel: Boole
 		PopupMessage("&dMoving", "For practice, shift fly forwards"),
 		PopupMessage("&dMoving", "&6&lHold the controller, face the window, & sneak")
 	) {
-		override fun setupHandlers() = on<StarshipTranslateEvent>({ it.player }) { event, player ->
+		override fun setupHandlers() = on<StarshipTranslateEvent>({ it.starship.playerPilot }) { event, player ->
 			nextStep(player)
 		}
 	},
@@ -122,7 +123,7 @@ enum class TutorialPhase(vararg val messages: TutorialMessage, val cancel: Boole
 		PopupMessage("&2Moving Down", "&6&lHold the controller, face down, & sneak"),
 		cancel = false // let them keep shift flying forward
 	) {
-		override fun setupHandlers() = on<StarshipTranslateEvent>({ it.player }) { event, player ->
+		override fun setupHandlers() = on<StarshipTranslateEvent>({ it.starship.playerPilot }) { event, player ->
 			if (event.y < 0) {
 				nextStep(player)
 			} else {
@@ -139,7 +140,7 @@ enum class TutorialPhase(vararg val messages: TutorialMessage, val cancel: Boole
 		PopupMessage("&dRotating", "Right click to turn right, left click for left"),
 		PopupMessage("&dRotating", "&6&lHold the controller, right click the helm sign")
 	) {
-		override fun setupHandlers() = on<StarshipRotateEvent>({ it.player }) { event, player ->
+		override fun setupHandlers() = on<StarshipRotateEvent>({ it.starship.playerPilot }) { event, player ->
 			if (event.clockwise) {
 				nextStep(player)
 			}
@@ -149,7 +150,7 @@ enum class TutorialPhase(vararg val messages: TutorialMessage, val cancel: Boole
 		PopupMessage("&dRotating", "&6&lNow left click the helm sign"),
 		cancel = false // let them rotate
 	) {
-		override fun setupHandlers() = on<StarshipRotateEvent>({ it.player }) { event, player ->
+		override fun setupHandlers() = on<StarshipRotateEvent>({ it.starship.playerPilot }) { event, player ->
 			if (!event.clockwise) {
 				nextStep(player)
 			}
@@ -164,14 +165,14 @@ enum class TutorialPhase(vararg val messages: TutorialMessage, val cancel: Boole
 		PopupMessage("&9Cruising", "If you can't face the right way, turn the ship"),
 		PopupMessage("&9Cruising", "&6&lHold the controller & right click cruise sign")
 	) {
-		override fun setupHandlers() = on<StarshipStartCruisingEvent>({ it.player }) { event, player ->
+		override fun setupHandlers() = on<StarshipStartCruisingEvent>({ it.starship.playerPilot }) { event, player ->
 			nextStep(player)
 		}
 	},
 	CRUISE_STOP(
 		PopupMessage("&9Stop Cruising", "&6&lLeft click the cruise sign to stop")
 	) {
-		override fun setupHandlers() = on<StarshipStopCruisingEvent>({ it.player }) { event, player ->
+		override fun setupHandlers() = on<StarshipStopCruisingEvent>({ it.starship.playerPilot }) { event, player ->
 			nextStep(player)
 		}
 	},
@@ -180,7 +181,7 @@ enum class TutorialPhase(vararg val messages: TutorialMessage, val cancel: Boole
 		PopupMessage("&7Releasing", "Releasing also lets you leave the ship"),
 		PopupMessage("&7Releasing", "&e&lType /release or right click the computer")
 	) {
-		override fun setupHandlers() = on<StarshipUnpilotEvent>({ it.player }) { event, player ->
+		override fun setupHandlers() = on<StarshipUnpilotEvent>({ (it.controller as? PlayerController)?.player }) { event, player ->
 			event.isCancelled = true
 			StarshipDestruction.vanish(event.starship)
 			nextStep(player)

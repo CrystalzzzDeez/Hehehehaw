@@ -1,14 +1,15 @@
 package net.horizonsend.ion.server.miscellaneous.utils
 
 import com.sk89q.worldedit.extent.clipboard.Clipboard
+import com.sk89q.worldedit.math.BlockVector3
 import net.horizonsend.ion.common.database.SLTextStyleDB
 import net.horizonsend.ion.common.database.StarshipTypeDB
-import net.horizonsend.ion.common.database.objId
 import net.horizonsend.ion.common.database.schema.Cryopod
 import net.horizonsend.ion.common.database.schema.misc.SLPlayer
 import net.horizonsend.ion.common.database.schema.misc.SLPlayerId
 import net.horizonsend.ion.common.database.schema.starships.Blueprint
 import net.horizonsend.ion.common.database.schema.starships.PlayerStarshipData
+import net.horizonsend.ion.common.database.schema.starships.StarshipData
 import net.horizonsend.ion.common.database.slPlayerId
 import net.horizonsend.ion.common.utils.DBVec3i
 import net.horizonsend.ion.server.features.cache.PlayerCache
@@ -19,10 +20,7 @@ import org.bukkit.Location
 import org.bukkit.World
 import org.bukkit.entity.Player
 import org.bukkit.util.Vector
-import org.litote.kmongo.and
-import org.litote.kmongo.eq
-import org.litote.kmongo.findOne
-import java.util.*
+import java.util.Base64
 
 val SLTextStyleDB.actualStyle get() = SLTextStyle.valueOf(this)
 val StarshipTypeDB.actualType get() = StarshipType.valueOf(this)
@@ -32,7 +30,7 @@ val Player.slPlayerId: SLPlayerId get() = uniqueId.slPlayerId
 operator fun SLPlayer.Companion.get(player: Player): SLPlayer = SLPlayer[player.uniqueId]
 	?: error("Missing SLPlayer for online player ${player.name}")
 
-fun PlayerStarshipData.bukkitWorld(): World = requireNotNull(Bukkit.getWorld(levelName)) {
+fun StarshipData.bukkitWorld(): World = requireNotNull(Bukkit.getWorld(levelName)) {
 	"World $levelName is not loaded, but tried getting it for computer $_id"
 }
 
@@ -49,14 +47,6 @@ fun Blueprint.Companion.createData(schematic: Clipboard): String {
 
 fun Blueprint.Companion.parseData(data: String): Clipboard {
 	return StarshipSchematic.deserializeSchematic(Base64.getDecoder().decode(data))
-}
-
-fun Blueprint.Companion.get(owner: SLPlayerId, name: String): Blueprint? {
-	return Blueprint.col.findOne(and(Blueprint::owner eq owner, Blueprint::name eq name))
-}
-
-fun Blueprint.Companion.create(owner: SLPlayerId, name: String, type: StarshipType, pilotLoc: Vec3i, size: Int, data: String) {
-	Blueprint.col.insertOne(Blueprint(objId(), owner, name, type.name, pilotLoc, size, data))
 }
 
 fun Blueprint.loadClipboard(): Clipboard {
@@ -78,9 +68,9 @@ class Vec3i: DBVec3i {
 
 	constructor(location: Location) : super(location.blockX, location.blockY, location.blockZ)
 
-	override fun toString() = "$x,$y,$z"
+	constructor(vector: BlockVector3) : super(vector.blockX, vector.blockY, vector.blockZ)
 
-	fun toLocation(world: World?): Location = Location(world, x.toDouble(), y.toDouble(), z.toDouble())
+	fun toLocation(world: World): Location = Location(world, x.toDouble(), y.toDouble(), z.toDouble())
 
 	@Deprecated("Star Legacy's blockKey is not the same as Minecraft's blockKey")
 	fun toBlockKey(): Long = blockKey(x, y, z)
@@ -90,6 +80,17 @@ class Vec3i: DBVec3i {
 
 	fun distance(x: Int, y: Int, z: Int): Double = distance(this.x, this.y, this.z, x, y, z)
 
+	/**
+	 * @param other Vector that should be added from this one
+	 * @return A new vector with the values added
+	 **/
 	operator fun plus(other: Vec3i) = Vec3i(x + other.x, y + other.y, z + other.z)
+
+	/**
+	 * @param other Vector that should be subtracted from this one
+	 * @return A new vector with the values subtracted
+	 **/
 	operator fun minus(other: Vec3i) = Vec3i(x - other.x, y - other.y, z - other.z)
+
+	fun below(blocks: Int = 1) = Vec3i(x, y - blocks, z)
 }

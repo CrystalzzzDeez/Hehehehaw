@@ -37,6 +37,8 @@ operator fun Location.component2(): Double = this.x
 operator fun Location.component3(): Double = this.y
 operator fun Location.component4(): Double = this.z
 
+fun BlockPos.toVec3i() = Vec3i(this.x, this.y, this.z)
+
 fun isValidYLevel(y: Int) = y in 0..Bukkit.getServer().worlds[0].maxHeight
 
 @Deprecated("Star Legacy's blockKey is not the same as Minecraft's blockKey")
@@ -58,6 +60,43 @@ inline fun blockKeyZ(key: Long): Int = (key shl 10 shr 37).toInt()
 
 fun distanceSquared(fromX: Double, fromY: Double, fromZ: Double, toX: Double, toY: Double, toZ: Double): Double =
 	(fromX - toX).squared() + (fromY - toY).squared() + (fromZ - toZ).squared()
+
+
+fun distanceSquared(from: Vec3i, to: Vec3i): Int {
+	val (fromX, fromY, fromZ) = from
+	val (toX, toY, toZ) = to
+
+	return distanceSquared(fromX, fromY, fromZ, toX, toY, toZ)
+}
+fun distanceSquared(fromX: Int, fromY: Int, fromZ: Int, toX: Int, toY: Int, toZ: Int): Int {
+	val x = fromX - toX
+	val y = fromY - toY
+	val z = fromZ - toZ
+
+	return (x * x) + (y * y) + (z * z)
+}
+
+fun distance(from: Vector, to: Vector): Double {
+	val fromX = from.x
+	val fromY = from.y
+	val fromZ = from.z
+	val toX = to.x
+	val toY = to.y
+	val toZ = to.z
+
+	return distance(fromX, fromY, fromZ, toX, toY, toZ)
+}
+
+fun distanceSquared(from: Vector, to: Vector): Double {
+	val fromX = from.x
+	val fromY = from.y
+	val fromZ = from.z
+	val toX = to.x
+	val toY = to.y
+	val toZ = to.z
+
+	return distanceSquared(fromX, fromY, fromZ, toX, toY, toZ)
+}
 
 fun distance(fromX: Double, fromY: Double, fromZ: Double, toX: Double, toY: Double, toZ: Double): Double =
 	sqrt(distanceSquared(fromX, fromY, fromZ, toX, toY, toZ))
@@ -302,12 +341,75 @@ fun vectorToBlockFace(vector: Vector, includeVertical: Boolean = false): BlockFa
 		}
 	}
 
-	val yaw = atan2(-x, z)
-	val yawDegrees = Math.floorMod(Math.toDegrees(yaw).roundToInt(), 360)
-	return when (yawDegrees) {
-		in -45..45 -> BlockFace.SOUTH
-		in 45..135 -> BlockFace.WEST
-		in 135..225 -> BlockFace.NORTH
-		else -> BlockFace.EAST
-	}
+//	val yaw = atan2(-x, z)
+//	val yawDegrees = Math.floorMod(Math.toDegrees(yaw).roundToInt(), 360)
+
+	val twoPi = 2 * Math.PI
+	val theta = atan2(-x, z)
+	val yawDegrees = Math.toDegrees((theta + twoPi) % twoPi).toInt()
+
+	return yawToBlockFace(yawDegrees)
 }
+
+fun yawToBlockFace(yawDegrees: Int): BlockFace = when (yawDegrees) {
+	in 0..45 -> BlockFace.SOUTH
+	in 45..135 -> BlockFace.WEST
+	in 135..225 -> BlockFace.NORTH
+	in 225..315 -> BlockFace.EAST
+	in 315..360 -> BlockFace.SOUTH
+	else -> throw IllegalArgumentException()
+}
+
+fun vectorToPitchYaw(vector: Vector): Pair<Float, Float> {
+	val pitch: Float
+	val yaw: Float
+
+	val twoPi = 2 * Math.PI
+	val x = vector.x
+	val z = vector.z
+
+	if (x == 0.0 && z == 0.0) {
+		pitch = if (vector.y > 0) -90F else 90F
+		return pitch to 0F
+	}
+
+	val theta = atan2(-x, z)
+	yaw = Math.toDegrees((theta + twoPi) % twoPi).toFloat()
+
+	val x2 = NumberConversions.square(x)
+	val z2 = NumberConversions.square(z)
+	val xz = sqrt(x2 + z2)
+	pitch = Math.toDegrees(atan(-vector.y / xz)).toFloat()
+
+	return pitch to yaw
+}
+
+fun getDirection(origin: Vec3i, destination: Vec3i): Vector = destination.minus(origin).toVector()
+
+/** Find the closest point along the vector to the vector **/
+fun nearestPointToVector(origin: Vector, direction: Vector, point: Vector): Vector {
+	val endPoint = origin.clone().add(direction)
+
+	val v = origin.clone().subtract(endPoint)
+	val u = endPoint.clone().subtract(point)
+
+	// The distance between the end and the origin as a fraction of the length of the line
+	val distance = -(v.clone().dot(u) / v.clone().dot(v))
+
+	return endPoint.clone().subtract(direction.clone().multiply(distance))
+}
+
+/** Find the distance to closest point along the vector to the location **/
+fun distanceToVector(origin: Vector, direction: Vector, point: Vector): Double {
+	val closestPoint = nearestPointToVector(origin, direction, point)
+
+	return closestPoint.distance(point)
+}
+
+fun cartesianProduct(a: Set<*>, b: Set<*>, vararg sets: Set<*>): Set<List<*>> =
+	(setOf(a, b).plus(sets))
+		.fold(listOf(listOf<Any?>())) { acc, set ->
+			acc.flatMap { list -> set.map { element -> list + element } }
+		}
+		.toSet()
+
