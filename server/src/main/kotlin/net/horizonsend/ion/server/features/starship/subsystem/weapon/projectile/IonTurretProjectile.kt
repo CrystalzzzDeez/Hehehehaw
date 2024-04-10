@@ -3,11 +3,19 @@ package net.horizonsend.ion.server.features.starship.subsystem.weapon.projectile
 import net.horizonsend.ion.server.configuration.StarshipWeapons
 import net.horizonsend.ion.server.features.starship.active.ActiveStarship
 import net.horizonsend.ion.server.features.starship.damager.Damager
+import net.horizonsend.ion.server.features.starship.subsystem.thruster.ThrusterSubsystem
+import net.horizonsend.ion.server.features.starship.subsystem.thruster.ThrusterType
+import net.horizonsend.ion.server.miscellaneous.utils.Tasks
 import net.horizonsend.ion.server.miscellaneous.utils.helixAroundVector
+import net.horizonsend.ion.server.miscellaneous.utils.vectorToBlockFace
+import net.minecraft.core.BlockPos
 import org.bukkit.Color
 import org.bukkit.Location
 import org.bukkit.Particle
+import org.bukkit.World
+import org.bukkit.block.BlockFace
 import org.bukkit.util.Vector
+import kotlin.math.roundToInt
 
 class IonTurretProjectile(
 		ship: ActiveStarship?,
@@ -45,7 +53,25 @@ class IonTurretProjectile(
 					true
 			)
 		}
-		loc.world.spawnParticle(particle, loc.x,loc.y,loc.z, 1, 0.0, 0.0, 0.0, 0.5, dustOptions, true)
+		loc.world.spawnParticle(particle, loc.x, loc.y, loc.z, 1, 0.0, 0.0, 0.0, 0.5, dustOptions, true)
+	}
+
+	override fun onImpactStarship(starship: ActiveStarship) {
+		val impactLocation = this.loc
+		val shipsThrusters = starship.thrusters
+		val shipsWeapons = starship.weapons
+		for(thruster in shipsThrusters){
+			if (impactLocation.distance(thruster.pos.toLocation(starship.world)) <= 5) {
+				shipsThrusters.remove(thruster)
+				Tasks.syncDelay(100L) {shipsThrusters.add(thruster)}
+			}
+		}
+		for(weapon in shipsWeapons) {
+			if (impactLocation.distance(weapon.pos.toLocation(starship.world)) <= 5) {
+				weapon.fireCooldownNanos += 1000
+				Tasks.syncDelay(50L) {weapon.fireCooldownNanos -= 1000}
+			}
+		}
 	}
 }
 
